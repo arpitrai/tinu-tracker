@@ -1,5 +1,5 @@
 {
-  "name": "health-tracker",
+  "name": "tinu-tracker",
   "version": "1.0.0",
   "main": "index.ts",
   "dependencies": {

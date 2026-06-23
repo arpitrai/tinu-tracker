@@ -1,15 +1,21 @@
 {
   "expo": {
-    "name": "health-tracker",
-    "slug": "health-tracker",
+    "name": "Tinu Tracker",
+    "slug": "tinu-tracker",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "light",
     "ios": {
-      "supportsTablet": true
+      "supportsTablet": true,
+      "bundleIdentifier": "com.arpitrai.tinutracker",
+      "infoPlist": {
+        "ITSAppUsesNonExemptEncryption": false
+      }
     },
     "android": {
+      "package": "com.arpitrai.tinutracker",
+      "versionCode": 1,
       "adaptiveIcon": {
         "backgroundColor": "#E6F4FE",
         "foregroundImage": "./assets/android-icon-foreground.png",
@@ -24,6 +30,11 @@
     "plugins": [
       "expo-web-browser",
       "expo-secure-store"
-    ]
+    ],
+    "extra": {
+      "eas": {
+        "projectId": "af77cb6c-63e3-4b2a-9443-59059ab4a7df"
+      }
+    }
   }
 }
