@@ -11,13 +11,14 @@ import {
   SafeAreaView,
   ActivityIndicator,
   Image,
+  StatusBar,
 } from 'react-native';
 import { supabase } from '../lib/supabase';
 import type { User } from '@supabase/supabase-js';
 import TrendsChart from '../components/TrendsChart';
 import ProfileMenu from '../components/ProfileMenu';
 import ProfileModal from '../components/ProfileModal';
-import TriToggle from '../components/TriToggle';
+import SplitToggle from '../components/SplitToggle';
 import Svg, { Path } from 'react-native-svg';
 
 function NavListIcon({ color }: { color: string }) {
@@ -44,7 +45,6 @@ interface DayEntry {
   weight: string | number | null;
 }
 
-
 type Tab = 'entries' | 'trend';
 
 function todayKey(): string {
@@ -67,8 +67,6 @@ function getFirstName(user: User): string {
 }
 
 function getAvatarUrl(user: User): string | null {
-  // Supabase maps Google's `picture` claim to avatar_url, but also keeps `picture` raw.
-  // Identities array has the unprocessed provider data as a fallback.
   return (
     user.user_metadata?.avatar_url ||
     user.user_metadata?.picture ||
@@ -78,13 +76,6 @@ function getAvatarUrl(user: User): string | null {
   ) ?? null;
 }
 
-function getGreeting(): string {
-  const h = new Date().getHours();
-  if (h < 12) return 'Good morning';
-  if (h < 17) return 'Good afternoon';
-  return 'Good evening';
-}
-
 function formatDateShort(dateStr: string): string {
   const [y, m, d] = dateStr.split('-').map(Number);
   return new Date(y, m - 1, d).toLocaleDateString('en-US', {
@@ -92,11 +83,13 @@ function formatDateShort(dateStr: string): string {
   });
 }
 
-function formatDateFull(dateStr: string): string {
+// "Thu, 25 Jun"
+function formatDatePretty(dateStr: string): string {
   const [y, m, d] = dateStr.split('-').map(Number);
-  return new Date(y, m - 1, d).toLocaleDateString('en-US', {
-    weekday: 'long', month: 'long', day: 'numeric',
-  });
+  const dt = new Date(y, m - 1, d);
+  const wd = dt.toLocaleDateString('en-US', { weekday: 'short' });
+  const mon = dt.toLocaleDateString('en-US', { month: 'short' });
+  return `${wd}, ${d} ${mon}`;
 }
 
 interface Props { user: User; }
@@ -110,21 +103,19 @@ export default function TrackerScreen({ user }: Props) {
   const [allEntries, setAllEntries] = useState<Map<string, DayEntry>>(new Map());
   const [loading, setLoading] = useState(true);
 
-  // Form state for the currently selected day
   const [exercised, setExercised] = useState<boolean | null>(null);
   const [ateSweets, setAteSweets] = useState<boolean | null>(null);
   const [weight, setWeight] = useState('');
   const [saving, setSaving] = useState(false);
   const [justSaved, setJustSaved] = useState(false);
+  const [isEditing, setIsEditing] = useState(false);
 
   const [menuVisible, setMenuVisible] = useState(false);
   const [profileVisible, setProfileVisible] = useState(false);
   const [displayName, setDisplayName] = useState(() => getFirstName(user));
   const [avatarUrl, setAvatarUrl] = useState<string | null>(() => getAvatarUrl(user));
   const [avatarError, setAvatarError] = useState(false);
-  const [isEditing, setIsEditing] = useState(false);
 
-  // Sync avatar if the user object is updated (e.g. after OAuth completes)
   useEffect(() => {
     const url = getAvatarUrl(user);
     if (url !== avatarUrl) {
@@ -133,9 +124,9 @@ export default function TrackerScreen({ user }: Props) {
     }
   }, [user]);
 
-  const savedEntry = allEntries.get(selectedDate);
-  const hasSavedEntry = !!savedEntry;
   const isToday = selectedDate === today;
+  const hasSavedEntry = allEntries.has(selectedDate);
+  const readOnly = hasSavedEntry && !isEditing;
 
   const loadData = useCallback(async () => {
     setLoading(true);
@@ -177,8 +168,38 @@ export default function TrackerScreen({ user }: Props) {
     setIsEditing(false);
   }
 
-  const goLeft = () => navigateToDate(offsetDateStr(selectedDate, -1));
-  const goRight = () => { if (!isToday) navigateToDate(offsetDateStr(selectedDate, 1)); };
+  const goLeft = () => { if (!isEditing) navigateToDate(offsetDateStr(selectedDate, -1)); };
+  const goRight = () => { if (!isToday && !isEditing) navigateToDate(offsetDateStr(selectedDate, 1)); };
+
+  function handleCancelEdit() {
+    const entry = allEntries.get(selectedDate);
+    if (entry) {
+      setExercised(entry.exercised);
+      setAteSweets(entry.ate_sweets);
+      setWeight(entry.weight != null ? String(entry.weight) : '');
+    }
+    setIsEditing(false);
+  }
+
+  // Seed the weight stepper with the most recent recorded weight (or a default).
+  function handleAddWeight() {
+    const prior = Array.from(allEntries.values())
+      .filter(e => e.weight != null && e.weight !== '' && e.date <= selectedDate)
+      .sort((a, b) => b.date.localeCompare(a.date));
+    setWeight(prior.length ? String(prior[0].weight) : '70.0');
+  }
+
+  const nothingEntered = exercised === null && ateSweets === null && !weight;
+
+  const incrementWeight = () => {
+    const current = parseFloat(weight) || 0;
+    setWeight((Math.round((current + 0.1) * 10) / 10).toFixed(1));
+  };
+
+  const decrementWeight = () => {
+    const current = parseFloat(weight) || 0;
+    if (current > 0) setWeight((Math.round((current - 0.1) * 10) / 10).toFixed(1));
+  };
 
   const handleSave = async () => {
     setSaving(true);
@@ -203,16 +224,29 @@ export default function TrackerScreen({ user }: Props) {
 
   const chartEntries = useMemo(() => Array.from(allEntries.values()), [allEntries]);
 
-  function getDayLabel(): string {
-    if (selectedDate === today) return 'Today';
-    if (selectedDate === yesterday) return 'Yesterday';
-    return formatDateShort(selectedDate);
+  // Last 365 days (not including today — today is shown in the day card)
+  const recentEntries = useMemo<DayEntry[]>(() => {
+    const result: DayEntry[] = [];
+    for (let i = 1; i <= 365; i++) {
+      const d = offsetDateStr(today, -i);
+      result.push(allEntries.get(d) ?? { date: d, exercised: null, ate_sweets: null, weight: null });
+    }
+    return result;
+  }, [allEntries, today]);
+
+  function getDateStatus(): { text: string; tone: 'muted' | 'saved' | 'edit' } {
+    if (isEditing) return { text: 'Editing…', tone: 'edit' };
+    const rel = isToday ? 'Today' : selectedDate === yesterday ? 'Yesterday' : null;
+    if (hasSavedEntry) {
+      return { text: rel ? `${rel} · saved ✓` : 'Saved ✓', tone: 'saved' };
+    }
+    return { text: rel ? `${rel} · not logged` : 'Not logged', tone: 'muted' };
   }
 
   if (loading) {
     return (
       <View style={styles.loadingScreen}>
-        <ActivityIndicator size="large" color={M3.primary} />
+        <ActivityIndicator size="large" color={P.primary} />
       </View>
     );
   }
@@ -221,25 +255,20 @@ export default function TrackerScreen({ user }: Props) {
     <SafeAreaView style={styles.safeArea}>
       {/* ── Header ── */}
       <View style={styles.header}>
-        <View>
-          <Text style={styles.greeting}>{getGreeting()}, {displayName}</Text>
-        </View>
-        <TouchableOpacity
-          onPress={() => setMenuVisible(true)}
-          style={styles.avatarBtn}
-        >
-          {avatarUrl && !avatarError ? (
-            <Image
-              source={{ uri: avatarUrl }}
-              style={styles.avatarImg}
-              onError={() => setAvatarError(true)}
-            />
-          ) : (
-            <Text style={styles.avatarText}>
-              {displayName.charAt(0).toUpperCase()}
-            </Text>
-          )}
-        </TouchableOpacity>
+        <Text style={styles.greeting}>Hi {displayName}</Text>
+        {isEditing && activeTab === 'entries' ? (
+          <TouchableOpacity onPress={handleCancelEdit} activeOpacity={0.7}>
+            <Text style={styles.cancelText}>Cancel</Text>
+          </TouchableOpacity>
+        ) : (
+          <TouchableOpacity onPress={() => setMenuVisible(true)} style={styles.avatarBtn}>
+            {avatarUrl && !avatarError ? (
+              <Image source={{ uri: avatarUrl }} style={styles.avatarImg} onError={() => setAvatarError(true)} />
+            ) : (
+              <Text style={styles.avatarText}>{displayName.charAt(0).toUpperCase()}</Text>
+            )}
+          </TouchableOpacity>
+        )}
       </View>
 
       <ProfileMenu
@@ -256,133 +285,206 @@ export default function TrackerScreen({ user }: Props) {
         onNameSaved={(name) => setDisplayName(name.split(' ')[0] || name)}
       />
 
+      <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'} style={styles.flex}>
+        <ScrollView contentContainerStyle={styles.scroll} keyboardShouldPersistTaps="handled">
 
-      <KeyboardAvoidingView
-        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-        style={styles.flex}
-      >
-        <ScrollView
-          contentContainerStyle={styles.scroll}
-          keyboardShouldPersistTaps="handled"
-        >
           {activeTab === 'entries' ? (
-            /* ── Entries tab ── */
-            <View style={styles.dayCard}>
-              {/* Day navigation — arrows tucked beside label */}
-              <View style={styles.dayNav}>
-                <TouchableOpacity style={styles.navBtn} onPress={goLeft} activeOpacity={0.7}>
-                  <Text style={styles.navBtnText}>‹</Text>
-                </TouchableOpacity>
-
-                <View style={styles.dayLabelWrap}>
-                  <Text style={styles.dayLabel}>{getDayLabel()}</Text>
-                  <Text style={styles.daySubLabel}>{formatDateFull(selectedDate)}</Text>
-                </View>
-
+            <>
+              {/* ── Date row (own row, back/forth arrows) ── */}
+              <View style={styles.dateRow}>
                 <TouchableOpacity
-                  style={[styles.navBtn, isToday && styles.navBtnDisabled]}
-                  onPress={goRight}
-                  disabled={isToday}
+                  style={[styles.dateNav, isEditing && styles.dateNavOff]}
+                  onPress={goLeft}
+                  disabled={isEditing}
                   activeOpacity={0.7}
                 >
-                  <Text style={[styles.navBtnText, isToday && styles.navBtnTextDisabled]}>›</Text>
+                  <Text style={styles.dateNavText}>‹</Text>
+                </TouchableOpacity>
+                <View style={styles.dateCenter}>
+                  <Text style={styles.dateMain}>{formatDatePretty(selectedDate)}</Text>
+                  {(() => {
+                    const st = getDateStatus();
+                    return (
+                      <Text style={[
+                        styles.dateSub,
+                        st.tone === 'saved' && styles.dateSubSaved,
+                        st.tone === 'edit' && styles.dateSubEdit,
+                      ]}>
+                        {st.text}
+                      </Text>
+                    );
+                  })()}
+                </View>
+                <TouchableOpacity
+                  style={[styles.dateNav, (isToday || isEditing) && styles.dateNavOff]}
+                  onPress={goRight}
+                  disabled={isToday || isEditing}
+                  activeOpacity={0.7}
+                >
+                  <Text style={styles.dateNavText}>›</Text>
                 </TouchableOpacity>
               </View>
 
-              {/* Entry fields — read-only when saved, editable otherwise */}
-              {hasSavedEntry && !isEditing ? (
-                <View>
-                  <ReadOnlyRow icon="🏃" label="Exercise" value={exercised === null ? '—' : exercised ? 'Yes' : 'No'} valueColor={exercised === null ? M3.onSurfaceVariant : exercised ? M3.green : M3.red} />
-                  <View style={styles.entryDivider} />
-                  <ReadOnlyRow icon="🍬" label="Sweets" value={ateSweets === null ? '—' : ateSweets ? 'Yes' : 'No'} valueColor={ateSweets === null ? M3.onSurfaceVariant : !ateSweets ? M3.green : M3.red} />
-                  <View style={styles.entryDivider} />
-                  <ReadOnlyRow icon="⚖️" label="Weight" value={weight ? `${weight} kg` : '—'} />
+              {/* ── Entry section (Thumb Zone) ── */}
+              <View style={styles.entrySection}>
+                {/* Exercise */}
+                <View style={styles.metric}>
+                  <View style={styles.mtitleRow}>
+                    <Text style={styles.mTitle}>Exercise</Text>
+                    <Text style={styles.mHelper}>Any movement</Text>
+                  </View>
+                  <SplitToggle
+                    value={exercised}
+                    onChange={setExercised}
+                    yesColor={P.green}
+                    noColor={P.red}
+                    locked={readOnly}
+                  />
                 </View>
-              ) : (
-                <View>
-                  <View style={styles.entryRow}>
-                    <View style={styles.entryRowLeft}>
-                      <Text style={styles.entryRowIcon}>🏃</Text>
-                      <Text style={styles.entryRowLabel}>Exercise</Text>
-                    </View>
-                    <TriToggle
-                      value={exercised}
-                      onChange={setExercised}
-                      yesColor={M3.green}
-                      noColor={M3.red}
-                    />
+
+                {/* Sugar */}
+                <View style={styles.metric}>
+                  <View style={styles.mtitleRow}>
+                    <Text style={styles.mTitle}>Sugar</Text>
+                    <Text style={styles.mHelper}>Sweets or dessert</Text>
                   </View>
-
-                  <View style={styles.entryDivider} />
-
-                  <View style={styles.entryRow}>
-                    <View style={styles.entryRowLeft}>
-                      <Text style={styles.entryRowIcon}>🍬</Text>
-                      <Text style={styles.entryRowLabel}>Sweets</Text>
-                    </View>
-                    <TriToggle
-                      value={ateSweets}
-                      onChange={setAteSweets}
-                      yesColor={M3.red}
-                      noColor={M3.green}
-                    />
-                  </View>
-
-                  <View style={styles.entryDivider} />
-
-                  <View style={styles.entryRow}>
-                    <View style={styles.entryRowLeft}>
-                      <Text style={styles.entryRowIcon}>⚖️</Text>
-                      <Text style={styles.entryRowLabel}>Weight</Text>
-                    </View>
-                    <View style={styles.weightInputWrap}>
-                      <TextInput
-                        style={styles.weightRowInput}
-                        value={weight}
-                        onChangeText={text => {
-                          let v = text.replace(/[^0-9.]/g, '');
-                          const dot = v.indexOf('.');
-                          if (dot !== -1) v = v.slice(0, dot + 1) + v.slice(dot + 1).replace(/\./g, '');
-                          setWeight(v);
-                        }}
-                        keyboardType="decimal-pad"
-                        placeholder=""
-                        returnKeyType="done"
-                      />
-                      <Text style={styles.weightRowUnit}>kg</Text>
-                    </View>
-                  </View>
+                  <SplitToggle
+                    value={ateSweets}
+                    onChange={setAteSweets}
+                    yesColor={P.red}
+                    noColor={P.green}
+                    locked={readOnly}
+                  />
                 </View>
-              )}
 
-              {/* Edit / Save button */}
-              {hasSavedEntry && !isEditing ? (
-                <TouchableOpacity
-                  style={styles.editBtn}
-                  onPress={() => setIsEditing(true)}
-                  activeOpacity={0.85}
-                >
-                  <Text style={styles.editBtnText}>Edit</Text>
-                </TouchableOpacity>
-              ) : (
-                <TouchableOpacity
-                  style={[styles.primaryBtn, justSaved && styles.savedBtn, saving && styles.disabled]}
-                  onPress={handleSave}
-                  disabled={saving}
-                  activeOpacity={0.85}
-                >
-                  {saving ? (
-                    <ActivityIndicator color="#fff" />
+                {/* Weight */}
+                <View style={styles.metric}>
+                  <View style={styles.mtitleRow}>
+                    <Text style={styles.mTitle}>Weight</Text>
+                    <Text style={styles.mHelper}>kg</Text>
+                  </View>
+                  {readOnly ? (
+                    <View style={[styles.wtBox, styles.wtBoxLocked]}>
+                      <View style={styles.wtSpacer} />
+                      <View style={styles.wtVal}>
+                        <Text style={styles.wtNum}>{weight || '—'}</Text>
+                        <Text style={styles.wtUnit}>kg</Text>
+                      </View>
+                      <View style={styles.wtSpacer} />
+                    </View>
+                  ) : weight === '' ? (
+                    <TouchableOpacity style={styles.wtEmpty} onPress={handleAddWeight} activeOpacity={0.8}>
+                      <Text style={styles.wtEmptyText}>+ Add weight</Text>
+                    </TouchableOpacity>
                   ) : (
-                    <Text style={styles.primaryBtnText}>
-                      {justSaved ? '✓  Saved' : 'Save'}
-                    </Text>
+                    <View style={styles.wtBox}>
+                      <TouchableOpacity style={styles.wtStep} onPress={decrementWeight} activeOpacity={0.7}>
+                        <Text style={styles.wtStepText}>–</Text>
+                      </TouchableOpacity>
+                      <View style={styles.wtVal}>
+                        <TextInput
+                          style={styles.wtNumInput}
+                          value={weight}
+                          onChangeText={text => {
+                            let v = text.replace(/[^0-9.]/g, '');
+                            const dot = v.indexOf('.');
+                            if (dot !== -1) v = v.slice(0, dot + 1) + v.slice(dot + 1).replace(/\./g, '');
+                            setWeight(v);
+                          }}
+                          keyboardType="decimal-pad"
+                          returnKeyType="done"
+                        />
+                        <Text style={styles.wtUnit}>kg</Text>
+                      </View>
+                      <TouchableOpacity style={styles.wtStep} onPress={incrementWeight} activeOpacity={0.7}>
+                        <Text style={styles.wtStepText}>+</Text>
+                      </TouchableOpacity>
+                    </View>
                   )}
-                </TouchableOpacity>
-              )}
-            </View>
+                </View>
+
+                {/* Action */}
+                <View style={styles.actionWrap}>
+                  {readOnly ? (
+                    <TouchableOpacity style={styles.editBtn} onPress={() => setIsEditing(true)} activeOpacity={0.85}>
+                      <Text style={styles.editBtnText}>Edit entry</Text>
+                    </TouchableOpacity>
+                  ) : (
+                    <TouchableOpacity
+                      style={[
+                        styles.saveBtn,
+                        isEditing && styles.saveBtnEdit,
+                        justSaved && styles.saveBtnDone,
+                        nothingEntered && !isEditing && styles.saveBtnWait,
+                        saving && styles.disabled,
+                      ]}
+                      onPress={handleSave}
+                      disabled={saving || (nothingEntered && !isEditing)}
+                      activeOpacity={0.85}
+                    >
+                      {saving ? (
+                        <ActivityIndicator color="#fff" />
+                      ) : (
+                        <Text style={[
+                          styles.saveBtnText,
+                          nothingEntered && !isEditing && styles.saveBtnWaitText,
+                        ]}>
+                          {justSaved ? '✓  Saved' : isEditing ? 'Save changes' : 'Save day'}
+                        </Text>
+                      )}
+                    </TouchableOpacity>
+                  )}
+                  {nothingEntered && !readOnly && !isEditing && !justSaved && (
+                    <Text style={styles.saveHint}>Tap an answer to begin</Text>
+                  )}
+                </View>
+              </View>
+
+              {/* ── Recent history ── */}
+              <View style={styles.historyCard}>
+                {/* Column headers */}
+                <View style={styles.historyHeaderRow}>
+                  <View style={styles.historyDateCol} />
+                  <Text style={[styles.historyColLabel, styles.historyExCol]}>Exercise</Text>
+                  <Text style={[styles.historyColLabel, styles.historySugCol]}>Sugar</Text>
+                  <Text style={[styles.historyColLabel, styles.historyWtCol]}>Weight</Text>
+                </View>
+
+                {recentEntries.map((entry, i) => (
+                  <TouchableOpacity
+                    key={entry.date}
+                    style={[styles.historyRow, i < recentEntries.length - 1 && styles.historyRowBorder]}
+                    onPress={() => navigateToDate(entry.date)}
+                    activeOpacity={0.65}
+                  >
+                    <Text style={[styles.historyDateLabel, styles.historyDateCol]}>
+                      {formatDateShort(entry.date)}
+                    </Text>
+                    {/* Exercise dot */}
+                    <View style={styles.historyExCol}>
+                      {entry.exercised !== null && (
+                        <View style={[styles.indicatorDot, {
+                          backgroundColor: entry.exercised ? P.green : P.red,
+                        }]} />
+                      )}
+                    </View>
+                    {/* Sugar dot */}
+                    <View style={styles.historySugCol}>
+                      {entry.ate_sweets !== null && (
+                        <View style={[styles.indicatorDot, {
+                          backgroundColor: entry.ate_sweets ? P.red : P.green,
+                        }]} />
+                      )}
+                    </View>
+                    {/* Weight — blank if not recorded */}
+                    <Text style={[styles.historyWeightText, styles.historyWtCol]}>
+                      {entry.weight ? String(entry.weight) : ''}
+                    </Text>
+                  </TouchableOpacity>
+                ))}
+              </View>
+            </>
           ) : (
-            /* ── Trend tab ── */
             <>
               {chartEntries.length > 0 ? (
                 <TrendsChart entries={chartEntries} />
@@ -400,81 +502,49 @@ export default function TrackerScreen({ user }: Props) {
 
       {/* ── Bottom navigation ── */}
       <View style={styles.bottomNav}>
-        <TouchableOpacity
-          style={styles.navItem}
-          onPress={() => setActiveTab('entries')}
-          activeOpacity={0.7}
-        >
+        <TouchableOpacity style={styles.navItem} onPress={() => setActiveTab('entries')} activeOpacity={0.7}>
           <View style={[styles.navIndicator, activeTab === 'entries' && styles.navIndicatorActive]}>
-            <NavListIcon color={activeTab === 'entries' ? M3.primary : M3.onSurfaceVariant} />
+            <NavListIcon color={activeTab === 'entries' ? P.primary : P.textMuted} />
           </View>
-          <Text style={[styles.navLabel, activeTab === 'entries' && styles.navLabelActive]}>
-            Daily Log
-          </Text>
+          <Text style={[styles.navLabel, activeTab === 'entries' && styles.navLabelActive]}>Daily Log</Text>
         </TouchableOpacity>
-        <TouchableOpacity
-          style={styles.navItem}
-          onPress={() => setActiveTab('trend')}
-          activeOpacity={0.7}
-        >
+        <TouchableOpacity style={styles.navItem} onPress={() => setActiveTab('trend')} activeOpacity={0.7}>
           <View style={[styles.navIndicator, activeTab === 'trend' && styles.navIndicatorActive]}>
-            <NavTrendIcon color={activeTab === 'trend' ? M3.primary : M3.onSurfaceVariant} />
+            <NavTrendIcon color={activeTab === 'trend' ? P.primary : P.textMuted} />
           </View>
-          <Text style={[styles.navLabel, activeTab === 'trend' && styles.navLabelActive]}>
-            Trend
-          </Text>
+          <Text style={[styles.navLabel, activeTab === 'trend' && styles.navLabelActive]}>Trend</Text>
         </TouchableOpacity>
       </View>
     </SafeAreaView>
   );
 }
 
-/* ── Sub-components ── */
+/* ── Design tokens ── */
 
-function ReadOnlyRow({ icon, label, value, valueColor }: {
-  icon: string;
-  label: string;
-  value: string;
-  valueColor?: string;
-}) {
-  return (
-    <View style={styles.entryRow}>
-      <View style={styles.entryRowLeft}>
-        <Text style={styles.entryRowIcon}>{icon}</Text>
-        <Text style={styles.entryRowLabel}>{label}</Text>
-      </View>
-      <Text style={[styles.readOnlyValue, valueColor ? { color: valueColor } : null]}>{value}</Text>
-    </View>
-  );
-}
-
-/* ── Design tokens (Material Design 3) ── */
-
-const M3 = {
+const P = {
+  bg: '#FFFFFF',
+  surface: '#FAFAF8',
+  text: '#1C1915',
+  textMuted: '#9A9082',
+  divider: '#F0EEE8',
+  navBtnBg: '#F2F1EE',
   primary: '#1C6EF2',
-  onPrimary: '#FFFFFF',
-  primaryContainer: '#D8E2FF',
-  onPrimaryContainer: '#001252',
-  secondaryContainer: '#DAE2F9',
-  onSecondaryContainer: '#131C2B',
-  surface: '#FEFBFF',
-  onSurface: '#1B1B1F',
-  surfaceVariant: '#E1E2EC',
-  onSurfaceVariant: '#44474F',
-  surfaceContainerLow: '#F0F2FF',
-  outline: '#74777F',
-  outlineVariant: '#C4C6D0',
-  green: '#00C896',
-  red: '#FF4D4D',
+  primaryLight: '#EEF4FF',
+  green: '#10B981',
+  red: '#EF4444',
 };
 
 /* ── Styles ── */
 
 const styles = StyleSheet.create({
-  safeArea: { flex: 1, backgroundColor: M3.surface },
+  safeArea: {
+    flex: 1,
+    backgroundColor: P.bg,
+    paddingTop: Platform.OS === 'android' ? StatusBar.currentHeight : 0,
+  },
   flex: { flex: 1 },
-  loadingScreen: { flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: M3.surface },
-  scroll: { padding: 20, paddingBottom: 24 },
+  loadingScreen: { flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: P.bg },
+  scroll: { padding: 16, paddingBottom: 32, gap: 12 },
 
   // Header
   header: {
@@ -482,142 +552,230 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     alignItems: 'center',
     paddingHorizontal: 20,
-    paddingTop: 8,
+    paddingTop: 10,
     paddingBottom: 12,
   },
-  greeting: { fontSize: 22, fontWeight: '400', color: M3.onSurface },
-  headerDate: { fontSize: 13, color: M3.onSurfaceVariant, marginTop: 2 },
+  greeting: { fontSize: 19, fontWeight: '800', color: P.text, letterSpacing: -0.3 },
+  cancelText: { fontSize: 14, fontWeight: '700', color: P.textMuted },
   avatarBtn: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
-    backgroundColor: M3.primaryContainer,
+    width: 38,
+    height: 38,
+    borderRadius: 19,
+    backgroundColor: P.navBtnBg,
     justifyContent: 'center',
     alignItems: 'center',
+    overflow: 'hidden',
   },
-  avatarText: { fontSize: 16, fontWeight: '700', color: M3.onPrimaryContainer },
-  avatarImg: { width: 40, height: 40, borderRadius: 20 },
+  avatarText: { fontSize: 15, fontWeight: '700', color: P.text },
+  avatarImg: { width: 38, height: 38, borderRadius: 19 },
 
-  // Bottom navigation (M3 Navigation Bar)
-  bottomNav: {
-    flexDirection: 'row',
-    backgroundColor: M3.surface,
-    borderTopWidth: 1,
-    borderTopColor: M3.outlineVariant,
-    paddingTop: 12,
-    paddingBottom: 16,
-  },
-  navItem: {
-    flex: 1,
-    alignItems: 'center',
-    gap: 4,
-  },
-  navIndicator: {
-    width: 64,
-    height: 32,
-    borderRadius: 16,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  navIndicatorActive: {
-    backgroundColor: M3.primaryContainer,
-  },
-  navLabel: {
-    fontSize: 12,
-    fontWeight: '500',
-    color: M3.onSurfaceVariant,
-    letterSpacing: 0.4,
-  },
-  navLabelActive: {
-    color: M3.primary,
-    fontWeight: '700',
-  },
-
-  // Day card (M3 ElevatedCard tonal)
-  dayCard: {
-    backgroundColor: M3.surfaceContainerLow,
-    borderRadius: 28,
-    padding: 18,
-    gap: 14,
-  },
-
-  // Day navigation
-  dayNav: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 10,
-  },
-  navBtn: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
-    backgroundColor: M3.surfaceVariant,
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  navBtnDisabled: { opacity: 0.38 },
-  navBtnText: { fontSize: 24, color: M3.onSurface, fontWeight: '300', lineHeight: 28 },
-  navBtnTextDisabled: { color: M3.outline },
-  dayLabelWrap: { alignItems: 'center', minWidth: 120 },
-  dayLabel: { fontSize: 22, fontWeight: '400', color: M3.onSurface },
-  daySubLabel: { fontSize: 12, color: M3.onSurfaceVariant, marginTop: 2 },
-
-  // Entry rows
-  entryRow: {
+  // Date row (own row)
+  dateRow: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    height: 56,
-    paddingHorizontal: 4,
+    backgroundColor: P.navBtnBg,
+    borderRadius: 16,
+    padding: 6,
+    paddingHorizontal: 8,
   },
-  entryRowLeft: { flexDirection: 'row', alignItems: 'center', gap: 12 },
-  entryRowIcon: { fontSize: 20 },
-  entryRowLabel: { fontSize: 16, fontWeight: '400', color: M3.onSurface },
-  entryDivider: { height: 1, backgroundColor: M3.outlineVariant },
+  dateNav: {
+    width: 38,
+    height: 38,
+    borderRadius: 11,
+    backgroundColor: '#FFFFFF',
+    alignItems: 'center',
+    justifyContent: 'center',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.07,
+    shadowRadius: 3,
+    elevation: 1,
+  },
+  dateNavOff: { opacity: 0.35, backgroundColor: 'transparent', shadowOpacity: 0, elevation: 0 },
+  dateNavText: { fontSize: 20, color: P.text, fontWeight: '400', lineHeight: 24 },
+  dateCenter: { alignItems: 'center' },
+  dateMain: { fontSize: 15, fontWeight: '800', color: P.text, letterSpacing: -0.2 },
+  dateSub: { fontSize: 11, fontWeight: '700', color: P.textMuted, marginTop: 1 },
+  dateSubSaved: { color: '#0F8A66' },
+  dateSubEdit: { color: '#534AB7' },
 
-  weightInputWrap: { flexDirection: 'row', alignItems: 'center', gap: 4 },
-  weightRowInput: {
-    fontSize: 22,
-    fontWeight: '400',
-    color: M3.onSurface,
+  // Entry section
+  entrySection: { paddingTop: 6, gap: 18 },
+  metric: {},
+  mtitleRow: {
+    flexDirection: 'row',
+    alignItems: 'baseline',
+    justifyContent: 'space-between',
+    marginBottom: 9,
+  },
+  mTitle: { fontSize: 17, fontWeight: '800', color: P.text, letterSpacing: -0.3 },
+  mHelper: { fontSize: 11.5, fontWeight: '600', color: P.textMuted },
+
+  // Weight
+  wtEmpty: {
+    backgroundColor: '#F8F7FE',
+    borderWidth: 1.5,
+    borderColor: '#D6CFE9',
+    borderStyle: 'dashed',
+    borderRadius: 16,
+    paddingVertical: 16,
+    alignItems: 'center',
+  },
+  wtEmptyText: { color: '#534AB7', fontWeight: '700', fontSize: 15 },
+  wtBox: {
+    backgroundColor: '#F4F1FD',
+    borderRadius: 16,
+    paddingVertical: 11,
+    paddingHorizontal: 16,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+  wtBoxLocked: { backgroundColor: '#F6F4FB' },
+  wtStep: {
+    width: 38,
+    height: 38,
+    borderRadius: 12,
+    backgroundColor: '#FFFFFF',
+    alignItems: 'center',
+    justifyContent: 'center',
+    shadowColor: '#534AB7',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.18,
+    shadowRadius: 5,
+    elevation: 2,
+  },
+  wtStepText: { fontSize: 22, color: '#534AB7', fontWeight: '700', lineHeight: 24 },
+  wtSpacer: { width: 38 },
+  wtVal: { flexDirection: 'row', alignItems: 'baseline', gap: 3 },
+  wtNum: { fontSize: 28, fontWeight: '800', color: '#534AB7', letterSpacing: -0.5 },
+  wtNumInput: {
+    fontSize: 28,
+    fontWeight: '800',
+    color: '#534AB7',
     letterSpacing: -0.5,
-    width: 90,
-    textAlign: 'right',
-    paddingVertical: 6,
-    paddingHorizontal: 4,
+    textAlign: 'center',
+    minWidth: 86,
+    padding: 0,
   },
-  weightRowUnit: { fontSize: 14, color: M3.onSurfaceVariant, fontWeight: '400' },
+  wtUnit: { fontSize: 13, color: P.textMuted, fontWeight: '700' },
 
-  // Read-only value
-  readOnlyValue: { fontSize: 16, fontWeight: '400', color: M3.onSurface },
-
-  // Edit button (M3 Outlined Button)
+  // Action area
+  actionWrap: {},
   editBtn: {
-    borderWidth: 1,
-    borderColor: M3.outline,
-    borderRadius: 100,
-    paddingVertical: 12,
+    borderWidth: 1.5,
+    borderColor: '#CFE0FE',
+    borderRadius: 16,
+    height: 52,
     alignItems: 'center',
-    marginTop: 2,
+    justifyContent: 'center',
   },
-  editBtnText: { color: M3.primary, fontSize: 14, fontWeight: '500', letterSpacing: 0.1 },
+  editBtnText: { color: P.primary, fontSize: 15.5, fontWeight: '700', letterSpacing: 0.1 },
+  saveBtn: {
+    backgroundColor: P.primary,
+    borderRadius: 16,
+    height: 52,
+    alignItems: 'center',
+    justifyContent: 'center',
+    shadowColor: P.primary,
+    shadowOffset: { width: 0, height: 6 },
+    shadowOpacity: 0.3,
+    shadowRadius: 12,
+    elevation: 4,
+  },
+  saveBtnEdit: { backgroundColor: '#534AB7', shadowColor: '#534AB7' },
+  saveBtnDone: { backgroundColor: '#059669', shadowColor: '#059669' },
+  saveBtnWait: { backgroundColor: '#EEF0F3', shadowOpacity: 0, elevation: 0 },
+  saveBtnWaitText: { color: '#C8C0B8' },
+  disabled: { opacity: 0.4 },
+  saveBtnText: { color: '#fff', fontSize: 15.5, fontWeight: '700', letterSpacing: 0.1 },
+  saveHint: { textAlign: 'center', fontSize: 12, color: P.textMuted, marginTop: 9 },
 
-  // Primary button (M3 Filled Button)
-  primaryBtn: {
-    backgroundColor: M3.primary,
-    borderRadius: 100,
-    paddingVertical: 14,
-    alignItems: 'center',
-    marginTop: 2,
+  // Bottom nav
+  bottomNav: {
+    flexDirection: 'row',
+    backgroundColor: P.bg,
+    borderTopWidth: 1,
+    borderTopColor: P.divider,
+    paddingTop: 10,
+    paddingBottom: 16,
   },
-  savedBtn: { backgroundColor: '#146C2E' },
-  disabled: { opacity: 0.38 },
-  primaryBtnText: { color: '#fff', fontSize: 14, fontWeight: '500', letterSpacing: 0.1 },
+  navItem: { flex: 1, alignItems: 'center', gap: 4 },
+  navIndicator: {
+    width: 58,
+    height: 30,
+    borderRadius: 15,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  navIndicatorActive: { backgroundColor: P.primaryLight },
+  navLabel: { fontSize: 11, fontWeight: '500', color: P.textMuted, letterSpacing: 0.3 },
+  navLabelActive: { color: P.primary, fontWeight: '700' },
 
   // Empty state
   emptyState: { alignItems: 'center', paddingTop: 80, gap: 10 },
   emptyIcon: { fontSize: 48 },
-  emptyTitle: { fontSize: 24, fontWeight: '400', color: M3.onSurface },
-  emptyDesc: { fontSize: 14, color: M3.onSurfaceVariant, textAlign: 'center' },
+  emptyTitle: { fontSize: 22, fontWeight: '500', color: P.text },
+  emptyDesc: { fontSize: 14, color: P.textMuted, textAlign: 'center' },
+
+  // History card
+  historyCard: {
+    backgroundColor: P.surface,
+    borderRadius: 22,
+    paddingHorizontal: 16,
+    paddingTop: 12,
+    paddingBottom: 8,
+  },
+
+  // History column layout (shared between header and rows)
+  historyDateCol: { flex: 1 },
+  historyExCol: { width: 64, alignItems: 'center' },
+  historySugCol: { width: 52, alignItems: 'center' },
+  historyWtCol: { width: 56, textAlign: 'right' },
+
+  // History header row
+  historyHeaderRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingBottom: 8,
+    borderBottomWidth: 1,
+    borderBottomColor: P.divider,
+    marginBottom: 2,
+  },
+  historyColLabel: {
+    fontSize: 10,
+    fontWeight: '700',
+    color: P.textMuted,
+    letterSpacing: 0.5,
+    textTransform: 'uppercase',
+    textAlign: 'center',
+  },
+
+  // History data rows
+  historyRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 11,
+  },
+  historyRowBorder: {
+    borderBottomWidth: 1,
+    borderBottomColor: P.divider,
+  },
+  historyDateLabel: {
+    fontSize: 13,
+    color: P.text,
+    fontWeight: '400',
+  },
+  indicatorDot: {
+    width: 9,
+    height: 9,
+    borderRadius: 5,
+  },
+  historyWeightText: {
+    fontSize: 13,
+    color: P.textMuted,
+    fontWeight: '500',
+    fontVariant: ['tabular-nums'],
+  },
 });

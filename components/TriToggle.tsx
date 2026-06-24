@@ -1,50 +1,35 @@
 import React from 'react';
 import { View, Text, TouchableOpacity, StyleSheet } from 'react-native';
 
-const M3 = {
-  onSurface: '#1C1B1F',
-  onSurfaceVariant: '#49454F',
-  surfaceVariant: '#E7E0EC',
-  outlineVariant: '#CAC4D0',
-};
-
 interface Props {
   value: boolean | null;
   onChange: (v: boolean | null) => void;
   yesColor: string;
-  noColor: string | null;
+  noColor: string;
+  disabled?: boolean;
 }
 
-export default function TriToggle({ value, onChange, yesColor, noColor }: Props) {
-  const opts: { label: string; val: boolean; color: string | null }[] = [
+export default function TriToggle({ value, onChange, yesColor, noColor, disabled }: Props) {
+  const segs: { label: string; val: boolean; color: string }[] = [
     { label: 'Yes', val: true,  color: yesColor },
-    { label: 'No',  val: false, color: noColor },
+    { label: 'No',  val: false, color: noColor  },
   ];
+
   return (
-    <View style={styles.triToggle}>
-      {opts.map((opt, i) => {
-        const active = value === opt.val;
+    <View style={[styles.pill, disabled && styles.pillDisabled]}>
+      {segs.map((seg) => {
+        const active = value === seg.val;
         return (
           <TouchableOpacity
-            key={String(opt.val)}
-            testID={`toggle-${opt.label.toLowerCase()}`}
-            style={[
-              styles.triOption,
-              i > 0 && styles.triOptionDivider,
-              active && opt.color
-                ? { backgroundColor: opt.color }
-                : active
-                  ? styles.triOptionActiveNeutral
-                  : null,
-            ]}
-            onPress={() => onChange(active ? null : opt.val)}
-            activeOpacity={0.75}
+            key={String(seg.val)}
+            testID={`toggle-${seg.label.toLowerCase()}`}
+            style={[styles.seg, active && { backgroundColor: seg.color }]}
+            onPress={() => !disabled && onChange(active ? null : seg.val)}
+            activeOpacity={disabled ? 1 : 0.75}
+            disabled={disabled}
           >
-            <Text style={[
-              styles.triOptionText,
-              active && opt.color ? { color: '#fff' } : active ? { color: M3.onSurface } : null,
-            ]}>
-              {opt.label}
+            <Text style={[styles.segText, active && styles.segTextActive]}>
+              {seg.label}
             </Text>
           </TouchableOpacity>
         );
@@ -54,26 +39,30 @@ export default function TriToggle({ value, onChange, yesColor, noColor }: Props)
 }
 
 const styles = StyleSheet.create({
-  triToggle: {
+  pill: {
     flexDirection: 'row',
-    borderWidth: 1,
-    borderColor: M3.outlineVariant,
-    borderRadius: 40,
-    overflow: 'hidden',
+    backgroundColor: '#F2F1EE',
+    borderRadius: 22,
+    padding: 2,
   },
-  triOption: {
-    paddingHorizontal: 20,
-    paddingVertical: 9,
+  pillDisabled: {
+    opacity: 0.55,
+  },
+  seg: {
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+    borderRadius: 20,
     alignItems: 'center',
     justifyContent: 'center',
-    minWidth: 52,
+    minWidth: 48,
   },
-  triOptionDivider: {
-    borderLeftWidth: 1,
-    borderLeftColor: M3.outlineVariant,
+  segText: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#9A9082',
+    letterSpacing: 0.1,
   },
-  triOptionActiveNeutral: {
-    backgroundColor: M3.surfaceVariant,
+  segTextActive: {
+    color: '#FFFFFF',
   },
-  triOptionText: { fontSize: 14, fontWeight: '500', color: M3.onSurfaceVariant, letterSpacing: 0.1 },
 });

@@ -5,719 +5,971 @@ import {
   TouchableOpacity,
   StyleSheet,
   useWindowDimensions,
-  Platform,
 } from 'react-native';
-import Svg, { Path, Circle as SvgCircle, Line as SvgLine, Text as SvgText, Rect } from 'react-native-svg';
+import Svg, {
+  Path,
+  Rect,
+  Circle as SvgCircle,
+  Line as SvgLine,
+  Text as SvgText,
+  Defs,
+  LinearGradient as SvgLinearGradient,
+  Stop,
+} from 'react-native-svg';
 
-/* ── Design tokens (defined first — referenced at module init time) ── */
-
+/* ─────────────────────────────────────────
+   COLOURS
+───────────────────────────────────────── */
 const C = {
-  bg: '#F5F5FA',
-  card: '#FFFFFF',
-  cardDeep: '#F0F1F8',
-  border: 'rgba(0,0,0,0.07)',
-  accent: '#6C6FFF',
-  green: '#00C896',
-  amber: '#F59E0B',
-  red: '#FF4D4D',
-  text: '#0C0D1A',
-  textSec: '#8E8EA0',
-  textMuted: '#C0C4D0',
+  weight: '#534AB7',
+  weightArea0: 'rgba(83,74,183,0.13)',
+  weightArea1: 'rgba(83,74,183,0.00)',
+  sugar: '#D4537E',
+  sugarFill: 'rgba(212,83,126,0.30)',
+  sugarStroke: 'rgba(153,53,86,0.65)',
+  exercise: '#1D9E75',
+  exerciseFill: 'rgba(29,158,117,0.28)',
+  exerciseStroke: 'rgba(15,110,86,0.60)',
+  axis: '#B8B2AA',
+  axisLine: 'rgba(0,0,0,0.07)',
+  text: '#1C1915',
+  textMuted: '#9A9082',
+  surface: '#FAFAF8',
+  border: 'rgba(0,0,0,0.06)',
+  tooltip: '#1C1915',
+  pill: '#F2F1EE',
+  pillActive: '#3C3489',
+  pillActiveText: '#EEEDFE',
 };
 
-/* ── Types ── */
+/* ─────────────────────────────────────────
+   CHART LAYOUT CONSTANTS
+───────────────────────────────────────── */
+const Y_LEFT = 52;      // left margin: space for Y-axis labels
+const Y_RIGHT = 62;     // right margin: space for right labels / right axis
+const WEIGHT_H = 172;   // weight chart plot height (excluding pad)
+const PT = 10;          // chart pad top
+const BOOL_ROW = 36;    // height of one boolean row (sugar or exercise)
+const BOOL_GAP = 10;    // gap between sugar row and exercise row
+const BOOL_H = BOOL_ROW * 2 + BOOL_GAP; // total boolean chart height
+const PCT_H = 110;      // percentage bars chart height
+const X_AXIS_H = 26;    // x-axis tick area height
+const DOT_R = 3.5;      // data point circle radius
+const DOT_R_SEL = 5.5;  // selected data point circle radius
 
+/* ─────────────────────────────────────────
+   TYPES
+───────────────────────────────────────── */
 export interface ChartEntry {
-  date: string;
-  exercised: boolean | null;
-  ate_sweets: boolean | null;
+  date: string;                    // YYYY-MM-DD
+  exercised?: boolean | null;
+  ate_sweets?: boolean | null;
   weight?: string | number | null;
 }
 
-type Period = 'D' | 'W' | 'M' | 'Y';
-
 interface DataPoint {
-  label: string;
-  tooltipLabel: string;
+  key: string;           // raw key (date or period key)
+  label: string;         // short x-axis label
+  tooltipLabel: string;  // full label for tooltip
   weight: number | null;
-  exercisedPct: number | null;
-  sweetsPct: number | null;
+  sugarPct: number | null;    // 0–100
+  exercisePct: number | null; // 0–100
+  sugarBool: boolean | null;  // daily only
+  exerciseBool: boolean | null;
 }
 
-/* ── Helpers ── */
+type Granularity = 'D' | 'W' | 'M' | 'Q';
+type Preset = '7D' | '30D' | '90D' | '1Y' | 'ALL';
 
+/* ─────────────────────────────────────────
+   DATE / NUMBER HELPERS
+───────────────────────────────────────── */
 export function parseWeight(w: string | number | null | undefined): number | null {
   if (w == null || w === '') return null;
   const n = parseFloat(String(w));
   return isNaN(n) ? null : n;
 }
 
-function avg(nums: number[]): number | null {
-  if (!nums.length) return null;
-  return nums.reduce((a, b) => a + b, 0) / nums.length;
+function todayStr(): string {
+  return new Date().toISOString().split('T')[0];
 }
 
-export function dotColorForPoint(exPct: number | null, swPct: number | null): string {
-  if (exPct === null && swPct === null) return C.textMuted;
-  const score = (exPct ?? 0.5) + (1 - (swPct ?? 0.5));
-  if (score >= 1.4) return C.green;
-  if (score >= 0.6) return C.amber;
-  return C.red;
+function addDays(dateStr: string, n: number): string {
+  const [y, m, d] = dateStr.split('-').map(Number);
+  const dt = new Date(y, m - 1, d + n);
+  return `${dt.getFullYear()}-${String(dt.getMonth() + 1).padStart(2, '0')}-${String(dt.getDate()).padStart(2, '0')}`;
 }
 
-export function niceScale(minVal: number, maxVal: number) {
-  const range = maxVal - minVal || 1;
-  const rawStep = range / 4;
-  const mag = Math.pow(10, Math.floor(Math.log10(rawStep)));
-  const step = ([1, 2, 2.5, 5, 10].map(n => n * mag).find(s => s >= rawStep)) ?? mag * 10;
-  const niceMin = Math.floor(minVal / step) * step;
-  const niceMax = Math.ceil(maxVal / step) * step;
-  const sections = Math.max(1, Math.round((niceMax - niceMin) / step));
-  return { niceMin, niceMax, sections };
-}
-
-/* ── Aggregation ── */
-
-function weekKey(dateStr: string): string {
+function mondayOfWeek(dateStr: string): string {
   const [y, m, d] = dateStr.split('-').map(Number);
   const dt = new Date(y, m - 1, d);
-  const monday = new Date(dt);
-  monday.setDate(dt.getDate() - ((dt.getDay() + 6) % 7));
-  return monday.toISOString().split('T')[0];
+  const day = dt.getDay();
+  dt.setDate(dt.getDate() + (day === 0 ? -6 : 1 - day));
+  return `${dt.getFullYear()}-${String(dt.getMonth() + 1).padStart(2, '0')}-${String(dt.getDate()).padStart(2, '0')}`;
 }
 
-function groupBy(entries: ChartEntry[], keyFn: (d: string) => string): Map<string, ChartEntry[]> {
-  const map = new Map<string, ChartEntry[]>();
-  for (const e of entries) {
-    const k = keyFn(e.date);
-    const arr = map.get(k) ?? [];
-    arr.push(e);
-    map.set(k, arr);
-  }
-  return map;
+function monthKey(dateStr: string): string {
+  return dateStr.slice(0, 7);
 }
 
-function generateMonthDays(entries: ChartEntry[]): DataPoint[] {
-  const entryMap = new Map(entries.map(e => [e.date, e]));
-  const today = new Date();
-  const year = today.getFullYear();
-  const month = today.getMonth();
-  const days: DataPoint[] = [];
-  for (let d = 1; d <= today.getDate(); d++) {
-    const dt = new Date(year, month, d);
-    const dateKey = `${year}-${String(month + 1).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
-    const e = entryMap.get(dateKey) ?? null;
-    const dayShort = dt.toLocaleDateString('en-US', { weekday: 'short' });
-    const dayLong = dt.toLocaleDateString('en-US', { weekday: 'long' });
-    const monthShort = dt.toLocaleDateString('en-US', { month: 'short' });
-    days.push({
-      label: `${d} (${dayShort})`,
-      tooltipLabel: `${dayLong}, ${d} ${monthShort}`,
-      weight: e ? parseWeight(e.weight) : null,
-      exercisedPct: e ? (e.exercised === null ? null : e.exercised ? 1 : 0) : null,
-      sweetsPct: e ? (e.ate_sweets === null ? null : e.ate_sweets ? 1 : 0) : null,
-    });
-  }
-  return days;
+function quarterKey(dateStr: string): string {
+  const [y, m] = dateStr.split('-').map(Number);
+  return `${y}-Q${Math.ceil(m / 3)}`;
 }
 
-function aggregate(entries: ChartEntry[], period: Period): DataPoint[] {
-  if (period === 'D') return generateMonthDays(entries);
-  if (!entries.length) return [];
-  const sorted = [...entries].sort((a, b) => a.date.localeCompare(b.date));
+const MON = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 
-  const keyFn = period === 'W' ? weekKey
-    : period === 'M' ? (d: string) => d.slice(0, 7)
-    : (d: string) => d.slice(0, 4);
-
-  const labelAndTooltip = (k: string): { label: string; tooltipLabel: string } => {
-    if (period === 'W') {
-      const [y, m, d] = k.split('-').map(Number);
-      const start = new Date(y, m - 1, d);
-      const end = new Date(y, m - 1, d + 6);
-      const fmt = { month: 'short', day: 'numeric' } as const;
-      return {
-        label: start.toLocaleDateString('en-US', fmt),
-        tooltipLabel: `${start.toLocaleDateString('en-US', fmt)} – ${end.toLocaleDateString('en-US', fmt)}`,
-      };
-    }
-    if (period === 'M') {
-      const [y, m] = k.split('-').map(Number);
-      const dt = new Date(y, m - 1, 1);
-      return {
-        label: dt.toLocaleDateString('en-US', { month: 'short' }),
-        tooltipLabel: dt.toLocaleDateString('en-US', { month: 'long', year: 'numeric' }),
-      };
-    }
-    return { label: k, tooltipLabel: k };
-  };
-
-  const maxGroups = period === 'Y' ? 999 : 12;
-  const groups = groupBy(sorted, keyFn);
-  return Array.from(groups.keys()).sort().slice(-maxGroups).map(k => {
-    const grp = groups.get(k)!;
-    const ws = grp.map(e => parseWeight(e.weight)).filter((w): w is number => w !== null);
-    const trackedEx = grp.filter(e => e.exercised !== null);
-    const trackedSw = grp.filter(e => e.ate_sweets !== null);
+function formatLabel(key: string, g: Granularity): { label: string; tooltip: string } {
+  if (g === 'D') {
+    const [y, m, d] = key.split('-').map(Number);
+    const dt = new Date(y, m - 1, d);
     return {
-      ...labelAndTooltip(k),
-      weight: ws.length ? avg(ws)! : null,
-      exercisedPct: trackedEx.length ? trackedEx.filter(e => e.exercised).length / trackedEx.length : null,
-      sweetsPct: trackedSw.length ? trackedSw.filter(e => e.ate_sweets).length / trackedSw.length : null,
+      label: `${d} ${MON[m - 1]}`,
+      tooltip: dt.toLocaleDateString('en-US', { weekday: 'short', day: 'numeric', month: 'short', year: 'numeric' }),
     };
-  });
+  }
+  if (g === 'W') {
+    const [y, m, d] = key.split('-').map(Number);
+    return {
+      label: `${String(d).padStart(2, '0')} ${MON[m - 1]}`,
+      tooltip: `Week of ${String(d).padStart(2, '0')} ${MON[m - 1]} ${y}`,
+    };
+  }
+  if (g === 'M') {
+    const [y, m] = key.split('-').map(Number);
+    return { label: MON[m - 1], tooltip: `${MON[m - 1]} ${y}` };
+  }
+  // Quarterly: "2024-Q2"
+  const parts = key.split('-');
+  return { label: `${parts[1]} ${parts[0]}`, tooltip: `${parts[1]} ${parts[0]}` };
 }
 
-/* ── Constants ── */
+function fmtDateDisplay(d: string): string {
+  const [y, m, day] = d.split('-').map(Number);
+  return `${day} ${MON[m - 1]} ${y}`;
+}
 
-const PERIODS: { key: Period; label: string }[] = [
+/* ─────────────────────────────────────────
+   AGGREGATION
+───────────────────────────────────────── */
+function numAvg(nums: number[]): number | null {
+  return nums.length ? nums.reduce((a, b) => a + b, 0) / nums.length : null;
+}
+
+function aggregate(
+  entries: ChartEntry[],
+  g: Granularity,
+  start: string,
+  end: string,
+): DataPoint[] {
+  const filtered = entries.filter(e => e.date >= start && e.date <= end);
+  if (!filtered.length) return [];
+
+  if (g === 'D') {
+    const map = new Map(filtered.map(e => [e.date, e]));
+    const pts: DataPoint[] = [];
+    let cur = start;
+    while (cur <= end) {
+      const e = map.get(cur);
+      const { label, tooltip } = formatLabel(cur, 'D');
+      pts.push({
+        key: cur,
+        label,
+        tooltipLabel: tooltip,
+        weight: e ? parseWeight(e.weight) : null,
+        sugarPct: e && e.ate_sweets != null ? (e.ate_sweets ? 100 : 0) : null,
+        exercisePct: e && e.exercised != null ? (e.exercised ? 100 : 0) : null,
+        sugarBool: e?.ate_sweets ?? null,
+        exerciseBool: e?.exercised ?? null,
+      });
+      cur = addDays(cur, 1);
+    }
+    return pts;
+  }
+
+  const keyFn = g === 'W' ? mondayOfWeek : g === 'M' ? monthKey : quarterKey;
+  const groups = new Map<string, ChartEntry[]>();
+  for (const e of filtered) {
+    const k = keyFn(e.date);
+    if (!groups.has(k)) groups.set(k, []);
+    groups.get(k)!.push(e);
+  }
+
+  return Array.from(groups.keys())
+    .sort()
+    .map(k => {
+      const grp = groups.get(k)!;
+      const { label, tooltip } = formatLabel(k, g);
+      const ws = grp.map(e => parseWeight(e.weight)).filter((w): w is number => w !== null);
+      const tSugar = grp.filter(e => e.ate_sweets != null);
+      const tEx = grp.filter(e => e.exercised != null);
+      return {
+        key: k,
+        label,
+        tooltipLabel: tooltip,
+        weight: numAvg(ws),
+        sugarPct: tSugar.length ? (tSugar.filter(e => e.ate_sweets).length / tSugar.length) * 100 : null,
+        exercisePct: tEx.length ? (tEx.filter(e => e.exercised).length / tEx.length) * 100 : null,
+        sugarBool: null,
+        exerciseBool: null,
+      };
+    });
+}
+
+/* ─────────────────────────────────────────
+   SVG PATH HELPERS
+───────────────────────────────────────── */
+function catmullRom(pts: { x: number; y: number }[]): string {
+  if (pts.length === 0) return '';
+  if (pts.length === 1) return `M ${pts[0].x} ${pts[0].y}`;
+  let d = `M ${pts[0].x.toFixed(2)} ${pts[0].y.toFixed(2)}`;
+  const t = 1 / 3;
+  for (let i = 0; i < pts.length - 1; i++) {
+    const p0 = pts[Math.max(i - 1, 0)];
+    const p1 = pts[i];
+    const p2 = pts[i + 1];
+    const p3 = pts[Math.min(i + 2, pts.length - 1)];
+    const cp1x = p1.x + (p2.x - p0.x) * t;
+    const cp1y = p1.y + (p2.y - p0.y) * t;
+    const cp2x = p2.x - (p3.x - p1.x) * t;
+    const cp2y = p2.y - (p3.y - p1.y) * t;
+    d += ` C ${cp1x.toFixed(2)} ${cp1y.toFixed(2)},${cp2x.toFixed(2)} ${cp2y.toFixed(2)},${p2.x.toFixed(2)} ${p2.y.toFixed(2)}`;
+  }
+  return d;
+}
+
+/* ─────────────────────────────────────────
+   WEIGHT CHART
+───────────────────────────────────────── */
+interface WeightChartProps {
+  points: DataPoint[];
+  xPos: number[];      // x positions shared with lower chart
+  svgW: number;
+  selectedIdx: number | null;
+  onSelect: (i: number | null) => void;
+}
+
+function WeightChart({ points, xPos, svgW, selectedIdx, onSelect }: WeightChartProps) {
+  const svgH = PT + WEIGHT_H;
+  const plotW = svgW - Y_LEFT - Y_RIGHT;
+
+  const validWeights = points.map(p => p.weight).filter((w): w is number => w !== null);
+  if (!validWeights.length) {
+    return (
+      <Svg width={svgW} height={svgH}>
+        <SvgText x={svgW / 2} y={svgH / 2} fontSize={12} fill={C.textMuted} textAnchor="middle">
+          No weight data
+        </SvgText>
+      </Svg>
+    );
+  }
+
+  const wMin = Math.min(...validWeights) - 1.5;
+  const wMax = Math.max(...validWeights) + 1.5;
+  const wRange = wMax - wMin || 1;
+
+  // Y-axis ticks at round intervals
+  const tickStep = wRange > 10 ? 5 : wRange > 5 ? 2 : wRange > 2 ? 1 : 0.5;
+  const tickStart = Math.ceil(wMin / tickStep) * tickStep;
+  const ticks: number[] = [];
+  for (let v = tickStart; v <= wMax + tickStep * 0.01; v = Math.round((v + tickStep) * 1000) / 1000) {
+    ticks.push(v);
+  }
+
+  const yFor = (w: number) => PT + (1 - (w - wMin) / wRange) * WEIGHT_H;
+  const bottomY = PT + WEIGHT_H;
+
+  // Build consecutive non-null segments for line drawing
+  const segments: { i: number; x: number; y: number }[][] = [];
+  let cur: { i: number; x: number; y: number }[] = [];
+  for (let i = 0; i < points.length; i++) {
+    if (points[i].weight !== null) {
+      cur.push({ i, x: xPos[i], y: yFor(points[i].weight!) });
+    } else {
+      if (cur.length) { segments.push(cur); cur = []; }
+    }
+  }
+  if (cur.length) segments.push(cur);
+
+  const TT_W = 112; const TT_H = 48;
+
+  return (
+    <Svg width={svgW} height={svgH} style={{ overflow: 'visible' }}>
+      <Defs>
+        <SvgLinearGradient id="wArea" x1="0" y1="0" x2="0" y2="1">
+          <Stop offset="0%" stopColor={C.weight} stopOpacity={0.13} />
+          <Stop offset="100%" stopColor={C.weight} stopOpacity={0.0} />
+        </SvgLinearGradient>
+      </Defs>
+
+      {/* Y-axis grid lines + labels */}
+      {ticks.map((v, ti) => {
+        const y = yFor(v);
+        if (y < PT - 4 || y > bottomY + 4) return null;
+        return (
+          <React.Fragment key={ti}>
+            <SvgLine x1={Y_LEFT} y1={y} x2={Y_LEFT + plotW} y2={y}
+              stroke={C.axisLine} strokeWidth={1} />
+            <SvgText x={Y_LEFT - 6} y={y + 4} fontSize={10} fill={C.axis} textAnchor="end">
+              {v % 1 === 0 ? v.toFixed(0) : v.toFixed(1)}
+            </SvgText>
+          </React.Fragment>
+        );
+      })}
+
+      {/* Rotated Y-axis label */}
+      <SvgText
+        x={9} y={PT + WEIGHT_H / 2}
+        fontSize={9} fill={C.weight} textAnchor="middle"
+        transform={`rotate(-90, 9, ${PT + WEIGHT_H / 2})`}
+      >
+        Weight (kg)
+      </SvgText>
+
+      {/* Area fills */}
+      {segments.map((seg, si) => {
+        if (seg.length < 2) return null;
+        const linePath = catmullRom(seg.map(p => ({ x: p.x, y: p.y })));
+        const areaD = `${linePath} L ${seg[seg.length - 1].x} ${bottomY} L ${seg[0].x} ${bottomY} Z`;
+        return <Path key={si} d={areaD} fill="url(#wArea)" />;
+      })}
+
+      {/* Lines */}
+      {segments.map((seg, si) => {
+        if (seg.length < 2) return null;
+        return (
+          <Path
+            key={si}
+            d={catmullRom(seg.map(p => ({ x: p.x, y: p.y })))}
+            stroke={C.weight} strokeWidth={2.5}
+            fill="none" strokeLinecap="round" strokeLinejoin="round"
+          />
+        );
+      })}
+
+      {/* Data points */}
+      {points.length <= 90 && points.map((p, i) => {
+        if (p.weight === null) return null;
+        const cx = xPos[i];
+        const cy = yFor(p.weight);
+        const sel = i === selectedIdx;
+        return (
+          <React.Fragment key={i}>
+            <SvgCircle cx={cx} cy={cy} r={sel ? DOT_R_SEL + 2.5 : DOT_R + 1.5} fill="white" />
+            <SvgCircle cx={cx} cy={cy} r={sel ? DOT_R_SEL : DOT_R} fill={C.weight} />
+          </React.Fragment>
+        );
+      })}
+
+      {/* Tap targets */}
+      {points.map((p, i) => {
+        if (p.weight === null) return null;
+        const cx = xPos[i];
+        const tapW = xPos.length > 1
+          ? Math.max((xPos[1] - xPos[0]), 22)
+          : Math.max(plotW, 22);
+        return (
+          <Rect
+            key={i}
+            x={cx - tapW / 2} y={PT}
+            width={tapW} height={WEIGHT_H}
+            fill="transparent"
+            onPress={() => onSelect(i === selectedIdx ? null : i)}
+          />
+        );
+      })}
+
+      {/* Tooltip */}
+      {selectedIdx !== null && points[selectedIdx]?.weight != null && (() => {
+        const p = points[selectedIdx];
+        const cx = xPos[selectedIdx];
+        const cy = yFor(p.weight!);
+        const ttX = Math.min(Math.max(cx - TT_W / 2, Y_LEFT + 2), Y_LEFT + plotW - TT_W - 2);
+        const ttY = Math.max(cy - TT_H - 14, PT + 2);
+        return (
+          <React.Fragment>
+            <Rect x={ttX} y={ttY} width={TT_W} height={TT_H} rx={8} fill={C.tooltip} />
+            <SvgText x={ttX + TT_W / 2} y={ttY + 18} fontSize={14} fontWeight="700" fill="white" textAnchor="middle">
+              {p.weight!.toFixed(1)} kg
+            </SvgText>
+            <SvgText x={ttX + TT_W / 2} y={ttY + 36} fontSize={9.5} fill="rgba(255,255,255,0.55)" textAnchor="middle">
+              {p.tooltipLabel}
+            </SvgText>
+          </React.Fragment>
+        );
+      })()}
+
+      {/* Bottom border */}
+      <SvgLine x1={Y_LEFT} y1={bottomY} x2={Y_LEFT + plotW} y2={bottomY}
+        stroke={C.axisLine} strokeWidth={1} />
+    </Svg>
+  );
+}
+
+/* ─────────────────────────────────────────
+   BOOLEAN CHART  (Daily view)
+───────────────────────────────────────── */
+interface BoolChartProps {
+  points: DataPoint[];
+  xPos: number[];
+  svgW: number;
+  selectedIdx: number | null;
+  onSelect: (i: number | null) => void;
+  skipFactor: number;
+}
+
+function BoolChart({ points, xPos, svgW, selectedIdx, onSelect, skipFactor }: BoolChartProps) {
+  const svgH = BOOL_H + X_AXIS_H;
+  const plotW = svgW - Y_LEFT - Y_RIGHT;
+  const n = points.length;
+  const slotW = n > 1 ? plotW / (n - 1) : plotW;
+  const barW = Math.max(2.5, Math.min(slotW * 0.7, 15));
+
+  const sugarTop = 0;
+  const exTop = BOOL_ROW + BOOL_GAP;
+
+  const TT_W = 132; const TT_H = 62;
+
+  return (
+    <Svg width={svgW} height={svgH} style={{ overflow: 'visible' }}>
+      {/* Bars */}
+      {points.map((p, i) => {
+        const cx = xPos[i];
+        const bx = cx - barW / 2;
+        return (
+          <React.Fragment key={i}>
+            {p.sugarBool === true && (
+              <Rect x={bx} y={sugarTop + 2} width={barW} height={BOOL_ROW - 4} rx={2}
+                fill={C.sugarFill} stroke={C.sugarStroke} strokeWidth={0.8} />
+            )}
+            {p.exerciseBool === true && (
+              <Rect x={bx} y={exTop + 2} width={barW} height={BOOL_ROW - 4} rx={2}
+                fill={C.exerciseFill} stroke={C.exerciseStroke} strokeWidth={0.8} />
+            )}
+          </React.Fragment>
+        );
+      })}
+
+      {/* Row divider */}
+      <SvgLine x1={Y_LEFT} y1={BOOL_ROW + BOOL_GAP / 2}
+        x2={Y_LEFT + plotW} y2={BOOL_ROW + BOOL_GAP / 2}
+        stroke={C.axisLine} strokeWidth={1} />
+
+      {/* Right-side row labels */}
+      <SvgText x={Y_LEFT + plotW + 6} y={sugarTop + BOOL_ROW / 2 + 4}
+        fontSize={9.5} fill={C.sugar} fontWeight="600">
+        Sugar
+      </SvgText>
+      <SvgText x={Y_LEFT + plotW + 6} y={exTop + BOOL_ROW / 2 + 4}
+        fontSize={9.5} fill={C.exercise} fontWeight="600">
+        Exer.
+      </SvgText>
+
+      {/* X-axis line */}
+      <SvgLine x1={Y_LEFT} y1={BOOL_H} x2={Y_LEFT + plotW} y2={BOOL_H}
+        stroke={C.axisLine} strokeWidth={1} />
+
+      {/* X-axis labels */}
+      {points.map((p, i) => {
+        if (i !== 0 && i !== n - 1 && i % skipFactor !== 0) return null;
+        return (
+          <SvgText key={i} x={xPos[i]} y={BOOL_H + X_AXIS_H - 5}
+            fontSize={9.5} fill={C.axis} textAnchor="middle">
+            {p.label}
+          </SvgText>
+        );
+      })}
+
+      {/* Tap targets */}
+      {points.map((p, i) => {
+        if (p.sugarBool === null && p.exerciseBool === null) return null;
+        const cx = xPos[i];
+        const tapW = Math.max(slotW * 0.9, 18);
+        return (
+          <Rect key={i} x={cx - tapW / 2} y={0} width={tapW} height={BOOL_H}
+            fill="transparent"
+            onPress={() => onSelect(i === selectedIdx ? null : i)} />
+        );
+      })}
+
+      {/* Tooltip */}
+      {selectedIdx !== null && (() => {
+        const p = points[selectedIdx];
+        const cx = xPos[selectedIdx];
+        const ttX = Math.min(Math.max(cx - TT_W / 2, Y_LEFT + 2), Y_LEFT + plotW - TT_W - 2);
+        const ttY = -(TT_H + 8);
+        return (
+          <React.Fragment>
+            <Rect x={ttX} y={ttY} width={TT_W} height={TT_H} rx={8} fill={C.tooltip} />
+            <SvgText x={ttX + TT_W / 2} y={ttY + 14} fontSize={9} fill="rgba(255,255,255,0.5)" textAnchor="middle">
+              {p.tooltipLabel}
+            </SvgText>
+            <SvgText x={ttX + TT_W / 2} y={ttY + 31} fontSize={11} fontWeight="600" fill={C.sugar} textAnchor="middle">
+              Sugar: {p.sugarBool === null ? '—' : p.sugarBool ? 'Yes' : 'No'}
+            </SvgText>
+            <SvgText x={ttX + TT_W / 2} y={ttY + 50} fontSize={11} fontWeight="600" fill={C.exercise} textAnchor="middle">
+              Exercise: {p.exerciseBool === null ? '—' : p.exerciseBool ? 'Yes' : 'No'}
+            </SvgText>
+          </React.Fragment>
+        );
+      })()}
+    </Svg>
+  );
+}
+
+/* ─────────────────────────────────────────
+   PERCENTAGE CHART  (Weekly / Monthly / Quarterly)
+───────────────────────────────────────── */
+interface PctChartProps {
+  points: DataPoint[];
+  xPos: number[];
+  svgW: number;
+  selectedIdx: number | null;
+  onSelect: (i: number | null) => void;
+  skipFactor: number;
+}
+
+function PctChart({ points, xPos, svgW, selectedIdx, onSelect, skipFactor }: PctChartProps) {
+  const svgH = PCT_H + X_AXIS_H;
+  const plotW = svgW - Y_LEFT - Y_RIGHT;
+  const n = points.length;
+  const slotW = n > 0 ? plotW / n : plotW;
+  const barW = Math.max(4, Math.min(slotW * 0.36, 22));
+  const yTicks = [0, 25, 50, 75, 100];
+  const yFor = (pct: number) => (1 - pct / 100) * PCT_H;
+
+  const TT_W = 132; const TT_H = 62;
+
+  return (
+    <Svg width={svgW} height={svgH} style={{ overflow: 'visible' }}>
+      {/* Grid lines + right-axis labels */}
+      {yTicks.map(v => (
+        <React.Fragment key={v}>
+          <SvgLine x1={Y_LEFT} y1={yFor(v)} x2={Y_LEFT + plotW} y2={yFor(v)}
+            stroke={C.axisLine} strokeWidth={1} />
+          <SvgText x={Y_LEFT + plotW + 5} y={yFor(v) + 4}
+            fontSize={9} fill={C.axis}>
+            {v}%
+          </SvgText>
+        </React.Fragment>
+      ))}
+
+      {/* Right-axis label */}
+      <SvgText
+        x={Y_LEFT + plotW + 50} y={PCT_H / 2}
+        fontSize={9} fill={C.textMuted} textAnchor="middle"
+        transform={`rotate(90, ${Y_LEFT + plotW + 50}, ${PCT_H / 2})`}
+      >
+        % of days
+      </SvgText>
+
+      {/* Bars */}
+      {points.map((p, i) => {
+        const cx = xPos[i];
+        const sH = p.sugarPct != null ? (p.sugarPct / 100) * PCT_H : 0;
+        const eH = p.exercisePct != null ? (p.exercisePct / 100) * PCT_H : 0;
+        const sel = i === selectedIdx;
+        return (
+          <React.Fragment key={i}>
+            {p.sugarPct != null && (
+              <Rect x={cx - barW - 1} y={yFor(p.sugarPct)} width={barW} height={sH} rx={2}
+                fill={sel ? 'rgba(212,83,126,0.55)' : C.sugarFill}
+                stroke={C.sugarStroke} strokeWidth={0.8} />
+            )}
+            {p.exercisePct != null && (
+              <Rect x={cx + 1} y={yFor(p.exercisePct)} width={barW} height={eH} rx={2}
+                fill={sel ? 'rgba(29,158,117,0.52)' : C.exerciseFill}
+                stroke={C.exerciseStroke} strokeWidth={0.8} />
+            )}
+          </React.Fragment>
+        );
+      })}
+
+      {/* X-axis line */}
+      <SvgLine x1={Y_LEFT} y1={PCT_H} x2={Y_LEFT + plotW} y2={PCT_H}
+        stroke={C.axisLine} strokeWidth={1} />
+
+      {/* X-axis labels */}
+      {points.map((p, i) => {
+        if (i !== 0 && i !== n - 1 && i % skipFactor !== 0) return null;
+        return (
+          <SvgText key={i} x={xPos[i]} y={PCT_H + X_AXIS_H - 5}
+            fontSize={9.5} fill={C.axis} textAnchor="middle">
+            {p.label}
+          </SvgText>
+        );
+      })}
+
+      {/* Tap targets */}
+      {points.map((p, i) => (
+        <Rect key={i} x={Y_LEFT + slotW * i} y={0} width={slotW} height={PCT_H}
+          fill="transparent"
+          onPress={() => onSelect(i === selectedIdx ? null : i)} />
+      ))}
+
+      {/* Tooltip */}
+      {selectedIdx !== null && (() => {
+        const p = points[selectedIdx];
+        const cx = xPos[selectedIdx];
+        const ttX = Math.min(Math.max(cx - TT_W / 2, Y_LEFT + 2), Y_LEFT + plotW - TT_W - 2);
+        const ttY = -(TT_H + 8);
+        return (
+          <React.Fragment>
+            <Rect x={ttX} y={ttY} width={TT_W} height={TT_H} rx={8} fill={C.tooltip} />
+            <SvgText x={ttX + TT_W / 2} y={ttY + 14} fontSize={9} fill="rgba(255,255,255,0.5)" textAnchor="middle">
+              {p.tooltipLabel}
+            </SvgText>
+            <SvgText x={ttX + TT_W / 2} y={ttY + 31} fontSize={11} fontWeight="600" fill={C.sugar} textAnchor="middle">
+              Sugar: {p.sugarPct != null ? `${Math.round(p.sugarPct)}%` : '—'}
+            </SvgText>
+            <SvgText x={ttX + TT_W / 2} y={ttY + 50} fontSize={11} fontWeight="600" fill={C.exercise} textAnchor="middle">
+              Exercise: {p.exercisePct != null ? `${Math.round(p.exercisePct)}%` : '—'}
+            </SvgText>
+          </React.Fragment>
+        );
+      })()}
+    </Svg>
+  );
+}
+
+/* ─────────────────────────────────────────
+   MAIN COMPONENT
+───────────────────────────────────────── */
+const PRESETS: { key: Preset; label: string }[] = [
+  { key: '7D', label: '7D' },
+  { key: '30D', label: '30D' },
+  { key: '90D', label: '90D' },
+  { key: '1Y', label: '1Y' },
+  { key: 'ALL', label: 'All' },
+];
+
+const GRAN: { key: Granularity; label: string }[] = [
   { key: 'D', label: 'Daily' },
   { key: 'W', label: 'Weekly' },
   { key: 'M', label: 'Monthly' },
-  { key: 'Y', label: 'Yearly' },
+  { key: 'Q', label: 'Quarterly' },
 ];
 
-const Y_LABEL_W = 44;
-const PAD_RIGHT = 12;
-const PAD_TOP = 14;
-const PAD_BOTTOM = 30;
-const CHART_H = 180;
-const MIN_PT_SPACING = 28;
+export default function TrendsChart({ entries }: { entries: ChartEntry[] }) {
+  const { width } = useWindowDimensions();
+  // SVG stretches to full horizontal of the card interior (card has px-16, we compensate)
+  const svgW = width - 32;
+  const plotW = svgW - Y_LEFT - Y_RIGHT;
 
-/* ── SVG Chart (web + native fallback) ── */
-
-function WeightSvgChart({
-  points,
-  niceMin,
-  niceMax,
-  sections,
-  availableWidth,
-}: {
-  points: DataPoint[];
-  niceMin: number;
-  niceMax: number;
-  sections: number;
-  availableWidth: number;
-}) {
+  const [gran, setGran] = useState<Granularity>('D');
+  const [preset, setPreset] = useState<Preset>('30D');
   const [selectedIdx, setSelectedIdx] = useState<number | null>(null);
 
-  const n = points.length;
-  const plotW = Math.max(
-    availableWidth - Y_LABEL_W - PAD_RIGHT,
-    n > 1 ? (n - 1) * MIN_PT_SPACING : MIN_PT_SPACING,
-  );
-  const svgW = plotW + Y_LABEL_W + PAD_RIGHT;
-  const svgH = PAD_TOP + CHART_H + PAD_BOTTOM;
-  const yRange = niceMax - niceMin || 1;
+  const today = useMemo(() => todayStr(), []);
 
-  const xFor = (i: number) =>
-    Y_LABEL_W + (n <= 1 ? plotW / 2 : (i / (n - 1)) * plotW);
-  const yFor = (w: number) =>
-    PAD_TOP + (1 - (w - niceMin) / yRange) * CHART_H;
+  const { minDate, maxDate } = useMemo(() => {
+    if (!entries.length) return { minDate: today, maxDate: today };
+    const sorted = entries.map(e => e.date).sort();
+    return { minDate: sorted[0], maxDate: sorted[sorted.length - 1] };
+  }, [entries, today]);
 
-  const gridVals = Array.from(
-    { length: sections + 1 },
-    (_, i) => niceMin + (yRange / sections) * i,
-  );
-
-  const runs: number[][] = [];
-  let cur: number[] = [];
-  for (let i = 0; i < n; i++) {
-    if (points[i].weight !== null) {
-      cur.push(i);
-    } else {
-      if (cur.length) { runs.push(cur); cur = []; }
-    }
-  }
-  if (cur.length) runs.push(cur);
-
-  const labelEvery = n <= 7 ? 1 : n <= 15 ? 2 : n <= 21 ? 3 : 5;
-
-  const sel = selectedIdx !== null ? points[selectedIdx] : null;
-  const TT_W = 100; const TT_H = 46;
-  const ttX = selectedIdx !== null
-    ? Math.min(Math.max(xFor(selectedIdx) - TT_W / 2, Y_LABEL_W), svgW - TT_W - PAD_RIGHT)
-    : 0;
-  const ttY = sel?.weight != null
-    ? Math.max(yFor(sel.weight) - TT_H - 10, PAD_TOP)
-    : 0;
-
-  return (
-    <View style={{ overflow: 'hidden' }}>
-      <Svg width={Math.min(svgW, availableWidth + 40)} height={svgH}>
-        {gridVals.map((val, gi) => {
-          const y = yFor(val);
-          return (
-            <React.Fragment key={gi}>
-              <SvgLine x1={Y_LABEL_W} y1={y} x2={Y_LABEL_W + plotW} y2={y}
-                stroke="rgba(0,0,0,0.05)" strokeWidth={1} />
-              <SvgText x={Y_LABEL_W - 6} y={y + 4}
-                fontSize={11} fill={C.textSec} textAnchor="end">
-                {Math.round(val).toString()}
-              </SvgText>
-            </React.Fragment>
-          );
-        })}
-
-        {runs.map((run, ri) => {
-          if (run.length < 2) return null;
-          const d = run
-            .map((idx, j) => `${j === 0 ? 'M' : 'L'} ${xFor(idx).toFixed(1)} ${yFor(points[idx].weight!).toFixed(1)}`)
-            .join(' ');
-          return (
-            <Path key={ri} d={d} stroke={C.accent} strokeWidth={2.5}
-              fill="none" strokeLinecap="round" strokeLinejoin="round" />
-          );
-        })}
-
-        {points.map((p, i) => {
-          if (p.weight === null) return null;
-          const cx = xFor(i);
-          const cy = yFor(p.weight);
-          const fill = dotColorForPoint(p.exercisedPct, p.sweetsPct);
-          const selected = i === selectedIdx;
-          return (
-            <React.Fragment key={i}>
-              <SvgCircle cx={cx} cy={cy} r={16} fill="transparent"
-                onPress={() => setSelectedIdx(i === selectedIdx ? null : i)} />
-              {selected && <SvgCircle cx={cx} cy={cy} r={9} fill="white" />}
-              <SvgCircle cx={cx} cy={cy} r={selected ? 6 : 5} fill={fill} />
-            </React.Fragment>
-          );
-        })}
-
-        {points.map((p, i) => {
-          if (i !== 0 && i !== n - 1 && i % labelEvery !== 0) return null;
-          return (
-            <SvgText key={i} x={xFor(i)} y={PAD_TOP + CHART_H + 18}
-              fontSize={10} fill={C.textSec} textAnchor="middle">
-              {p.label.split(' ')[0]}
-            </SvgText>
-          );
-        })}
-
-        {sel && sel.weight !== null && (
-          <>
-            <SvgLine x1={xFor(selectedIdx!)} y1={PAD_TOP}
-              x2={xFor(selectedIdx!)} y2={PAD_TOP + CHART_H}
-              stroke={C.accent + '50'} strokeWidth={1} strokeDasharray="4,3" />
-            <Rect x={ttX} y={ttY} width={TT_W} height={TT_H} rx={8} fill={C.text} />
-            <SvgText x={ttX + TT_W / 2} y={ttY + 17}
-              fontSize={13} fontWeight="700" fill="white" textAnchor="middle">
-              {sel.weight.toFixed(1)} kg
-            </SvgText>
-            <SvgText x={ttX + TT_W / 2} y={ttY + 34}
-              fontSize={10} fill="rgba(255,255,255,0.65)" textAnchor="middle">
-              {sel.tooltipLabel}
-            </SvgText>
-          </>
-        )}
-      </Svg>
-    </View>
-  );
-}
-
-/* ── Victory Native Chart (iOS / Android only) ── */
-
-let WeightVictoryChart: React.ComponentType<{
-  points: DataPoint[];
-  niceMin: number;
-  niceMax: number;
-  sections: number;
-  availableWidth: number;
-}> = WeightSvgChart; // default fallback
-
-if (Platform.OS !== 'web') {
-  // Loaded lazily so web bundler never instantiates Skia
-  const { CartesianChart, Line, useChartPressState } =
-    require('victory-native') as typeof import('victory-native');
-  const { Circle, matchFont } =
-    require('@shopify/react-native-skia') as typeof import('@shopify/react-native-skia');
-  const { useAnimatedStyle, useAnimatedReaction, runOnJS, default: Animated } =
-    require('react-native-reanimated') as typeof import('react-native-reanimated');
-
-  const CHART_CONTAINER_H = 220;
-  const TT_W_V = 110;
-  const TT_H_V = 48;
-
-  WeightVictoryChart = function NativeChart({ points, niceMin, niceMax, sections, availableWidth }) {
-    const [selectedIdx, setSelectedIdx] = useState<number | null>(null);
-    const { state, isActive } = useChartPressState({ x: 0, y: { weight: 0 } });
-
-    const chartData = useMemo(
-      () => points.map((p, i) => ({ day: i, weight: p.weight })),
-      [points],
-    );
-    const dotColors = useMemo(
-      () => points.map(p => dotColorForPoint(p.exercisedPct, p.sweetsPct)),
-      [points],
-    );
-    const n = points.length;
-
-    const font = useMemo(() => {
-      try {
-        return matchFont({
-          fontFamily: Platform.OS === 'ios' ? 'Helvetica Neue' : 'sans-serif',
-          fontSize: 10,
-          fontStyle: 'normal',
-          fontWeight: 'normal',
-        });
-      } catch { return null; }
-    }, []);
-
-    useAnimatedReaction(
-      () => ({ active: state.isActive.value, xVal: state.x.value.value as number }),
-      ({ active, xVal }) => {
-        runOnJS(setSelectedIdx)(active ? Math.round(xVal) : null);
-      },
-    );
-
-    const tooltipStyle = useAnimatedStyle(() => {
-      const xPos = state.x.position.value;
-      const yPos = state.y.weight.position.value;
-      return {
-        opacity: state.isActive.value ? 1 : 0,
-        transform: [
-          { translateX: Math.max(0, Math.min(xPos - TT_W_V / 2, availableWidth - TT_W_V)) },
-          { translateY: Math.max(4, yPos - TT_H_V - 12) },
-        ],
-      };
-    });
-
-    const selPoint = selectedIdx !== null && selectedIdx >= 0 && selectedIdx < n
-      ? points[selectedIdx] : null;
-
-    return (
-      <View style={{ position: 'relative', height: CHART_CONTAINER_H }}>
-        <CartesianChart
-          data={chartData}
-          xKey="day"
-          yKeys={['weight']}
-          domain={{ y: [niceMin, niceMax] }}
-          domainPadding={{ left: 20, right: 20, top: 10 }}
-          chartPressState={state}
-          axisOptions={{
-            font,
-            tickCount: { x: Math.min(n, 7), y: sections + 1 },
-            formatXLabel: (val: number) => {
-              const idx = Math.round(Number(val));
-              if (idx < 0 || idx >= n) return '';
-              return points[idx].label.split(' ')[0];
-            },
-            formatYLabel: (val: number) => Math.round(Number(val)).toString(),
-            labelColor: C.textSec,
-            lineColor: {
-              grid: { x: 'transparent', y: 'rgba(0,0,0,0.05)' },
-              frame: 'rgba(0,0,0,0.07)',
-            },
-          }}
-        >
-          {({ points: pts }: any) => (
-            <>
-              <Line
-                points={pts.weight}
-                color={C.accent}
-                strokeWidth={2.5}
-                connectMissingData={false}
-              />
-              {pts.weight.map((pt: any, i: number) => {
-                if (typeof pt.y !== 'number') return null;
-                return (
-                  <Circle key={i} cx={pt.x} cy={pt.y} r={5}
-                    color={dotColors[i] ?? C.textMuted} />
-                );
-              })}
-            </>
-          )}
-        </CartesianChart>
-
-        <Animated.View style={[nativeStyles.tooltip, tooltipStyle]} pointerEvents="none">
-          {isActive && selPoint?.weight != null && (
-            <>
-              <Text style={nativeStyles.tooltipValue}>{selPoint.weight.toFixed(1)} kg</Text>
-              <Text style={nativeStyles.tooltipDate}>{selPoint.tooltipLabel}</Text>
-            </>
-          )}
-        </Animated.View>
-      </View>
-    );
-  };
-}
-
-const nativeStyles = StyleSheet.create({
-  tooltip: {
-    position: 'absolute',
-    width: 110,
-    height: 48,
-    backgroundColor: C.text,
-    borderRadius: 10,
-    paddingHorizontal: 10,
-    paddingVertical: 8,
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 2,
-    zIndex: 10,
-  },
-  tooltipValue: { fontSize: 13, fontWeight: '700', color: '#fff' },
-  tooltipDate: { fontSize: 10, color: 'rgba(255,255,255,0.65)' },
-});
-
-/* ── Main component ── */
-
-export default function TrendsChart({ entries }: { entries: ChartEntry[] }) {
-  const [period, setPeriod] = useState<Period>('D');
-  const { width } = useWindowDimensions();
-  const chartWidth = width - 32;
-
-  const points = useMemo(() => aggregate(entries, period), [entries, period]);
-
-  const rawWeights = useMemo(
-    () => points.map(p => p.weight).filter((w): w is number => w !== null),
-    [points],
-  );
-
-  const { niceMin, niceMax, sections } = useMemo(() => {
-    if (!rawWeights.length) return { niceMin: 0, niceMax: 100, sections: 4 };
-    return niceScale(Math.min(...rawWeights) - 2, Math.max(...rawWeights) + 2);
-  }, [rawWeights]);
-
-  const hasWeight = rawWeights.length > 0;
-
-  const insightStats = useMemo(() => {
-    const withWeight = entries.filter(e => parseWeight(e.weight) !== null);
-    const wOf = (sub: ChartEntry[]) =>
-      avg(sub.map(e => parseWeight(e.weight) as number));
-    const exDays = withWeight.filter(e => e.exercised === true);
-    const restDays = withWeight.filter(e => e.exercised === false);
-    const cleanDays = withWeight.filter(e => e.ate_sweets === false);
-    const sweetDays = withWeight.filter(e => e.ate_sweets === true);
-    return {
-      exercise: exDays.length >= 2 && restDays.length >= 2
-        ? { active: wOf(exDays)!, rest: wOf(restDays)! } : null,
-      sweets: cleanDays.length >= 2 && sweetDays.length >= 2
-        ? { clean: wOf(cleanDays)!, sweets: wOf(sweetDays)! } : null,
+  const startDate = useMemo(() => {
+    const targets: Record<Preset, string> = {
+      '7D': addDays(today, -7),
+      '30D': addDays(today, -30),
+      '90D': addDays(today, -90),
+      '1Y': addDays(today, -365),
+      'ALL': minDate,
     };
-  }, [entries]);
+    const raw = targets[preset];
+    return raw < minDate ? minDate : raw;
+  }, [preset, minDate, today]);
+
+  const endDate = maxDate < today ? maxDate : today;
+
+  const points = useMemo(
+    () => aggregate(entries, gran, startDate, endDate),
+    [entries, gran, startDate, endDate],
+  );
+
+  // Compute X positions once — shared by both charts
+  const xPos = useMemo(() => {
+    const n = points.length;
+    if (n === 0) return [];
+    if (gran === 'D') {
+      // Edge-to-edge point layout
+      return points.map((_, i) => Y_LEFT + (n <= 1 ? plotW / 2 : i * (plotW / (n - 1))));
+    }
+    // Slot-center layout for aggregated views
+    const slotW = plotW / n;
+    return points.map((_, i) => Y_LEFT + (i + 0.5) * slotW);
+  }, [points, plotW, gran]);
+
+  const skipFactor = Math.max(1, Math.ceil(points.length / 12));
+
+  const stats = useMemo(() => {
+    const ws = points.map(p => p.weight).filter((w): w is number => w !== null);
+    const sPts = points.filter(p => p.sugarPct !== null);
+    const ePts = points.filter(p => p.exercisePct !== null);
+    return {
+      avgW: numAvg(ws),
+      avgSugar: sPts.length ? numAvg(sPts.map(p => p.sugarPct!))! : null,
+      avgEx: ePts.length ? numAvg(ePts.map(p => p.exercisePct!))! : null,
+    };
+  }, [points]);
+
+  const hasData = points.some(
+    p => p.weight !== null || p.sugarBool !== null || p.exerciseBool !== null || p.sugarPct !== null,
+  );
+  const isDaily = gran === 'D';
+
+  function handleGranChange(g: Granularity) {
+    setGran(g);
+    setSelectedIdx(null);
+  }
+
+  function handlePresetChange(p: Preset) {
+    setPreset(p);
+    setSelectedIdx(null);
+  }
 
   return (
-    <View style={styles.container}>
-      {/* Period tabs */}
-      <View style={styles.periodBar}>
-        {PERIODS.map(({ key, label }) => (
-          <TouchableOpacity
-            key={key}
-            style={[styles.periodBtn, period === key && styles.periodBtnActive]}
-            onPress={() => setPeriod(key)}
-            activeOpacity={0.75}
-          >
-            <Text style={[styles.periodText, period === key && styles.periodTextActive]}>
-              {label}
-            </Text>
-          </TouchableOpacity>
-        ))}
+    <View style={s.card}>
+      {/* ── Controls ── */}
+      <View style={s.controlsWrap}>
+        {/* Preset buttons */}
+        <View style={s.pillRow}>
+          {PRESETS.map(({ key, label }) => (
+            <TouchableOpacity
+              key={key}
+              style={[s.pillBtn, preset === key && s.pillBtnOn]}
+              onPress={() => handlePresetChange(key)}
+              activeOpacity={0.75}
+            >
+              <Text style={[s.pillTxt, preset === key && s.pillTxtOn]}>{label}</Text>
+            </TouchableOpacity>
+          ))}
+        </View>
+
+        {/* Date range display */}
+        <Text style={s.rangeTxt}>
+          {fmtDateDisplay(startDate)} – {fmtDateDisplay(endDate)}
+        </Text>
+
+        {/* Granularity */}
+        <View style={[s.pillRow, { marginTop: 10 }]}>
+          {GRAN.map(({ key, label }) => (
+            <TouchableOpacity
+              key={key}
+              style={[s.pillBtn, gran === key && s.pillBtnOn]}
+              onPress={() => handleGranChange(key)}
+              activeOpacity={0.75}
+            >
+              <Text style={[s.pillTxt, gran === key && s.pillTxtOn]}>{label}</Text>
+            </TouchableOpacity>
+          ))}
+        </View>
       </View>
 
-      {/* Legend */}
-      <View style={styles.legend}>
-        <LegendDot color={C.green} label="Healthy day" />
-        <LegendDot color={C.amber} label="Mixed" />
-        <LegendDot color={C.red} label="Unhealthy day" />
-        <LegendDot color={C.textMuted} label="No data" />
+      {/* ── Legend ── */}
+      <View style={s.legend}>
+        <View style={s.legendItem}>
+          <View style={[s.swatchLine, { backgroundColor: C.weight }]} />
+          <Text style={s.legendTxt}>Weight (kg)</Text>
+        </View>
+        <View style={s.legendItem}>
+          <View style={[s.swatchBox, { backgroundColor: C.sugarFill, borderColor: C.sugarStroke }]} />
+          <Text style={s.legendTxt}>{isDaily ? 'Sugar day' : 'Sugar days %'}</Text>
+        </View>
+        <View style={s.legendItem}>
+          <View style={[s.swatchBox, { backgroundColor: C.exerciseFill, borderColor: C.exerciseStroke }]} />
+          <Text style={s.legendTxt}>{isDaily ? 'Exercise day' : 'Exercise days %'}</Text>
+        </View>
       </View>
 
-      {!hasWeight ? (
-        <View style={styles.empty}>
-          <Text style={styles.emptyText}>No weight data logged yet</Text>
+      {/* ── Charts ── */}
+      {!hasData ? (
+        <View style={s.empty}>
+          <Text style={s.emptyEmoji}>📊</Text>
+          <Text style={s.emptyTitle}>No data for this period</Text>
+          <Text style={s.emptyDesc}>Log some entries to see your trends here.</Text>
         </View>
       ) : (
-        <View style={styles.chartWrap}>
-          <Text style={styles.axisLabel}>Weight (kg)</Text>
-          <WeightVictoryChart
-            points={points}
-            niceMin={niceMin}
-            niceMax={niceMax}
-            sections={sections}
-            availableWidth={chartWidth}
-          />
-        </View>
-      )}
-
-      {/* Insight cards */}
-      {(insightStats.exercise || insightStats.sweets) && (
-        <View style={styles.insightSection}>
-          <Text style={styles.insightHeading}>How habits affect your weight</Text>
-          {insightStats.exercise && (
-            <InsightCard
-              icon="🏃"
-              title="Exercise"
-              leftLabel="Exercise days"
-              leftValue={insightStats.exercise.active}
-              rightLabel="Rest days"
-              rightValue={insightStats.exercise.rest}
-              lowerIsBetter
+        <View style={s.chartWrap}>
+          {/* Weight line chart */}
+          <View style={{ overflow: 'visible' }}>
+            <WeightChart
+              points={points}
+              xPos={xPos}
+              svgW={svgW}
+              selectedIdx={selectedIdx}
+              onSelect={setSelectedIdx}
             />
-          )}
-          {insightStats.sweets && (
-            <InsightCard
-              icon="🍬"
-              title="Sweets"
-              leftLabel="No sweets"
-              leftValue={insightStats.sweets.clean}
-              rightLabel="Sweets days"
-              rightValue={insightStats.sweets.sweets}
-              lowerIsBetter
-            />
-          )}
+          </View>
+
+          {/* Boolean / Percentage chart */}
+          <View style={{ marginTop: 6, overflow: 'visible' }}>
+            {isDaily ? (
+              <BoolChart
+                points={points}
+                xPos={xPos}
+                svgW={svgW}
+                selectedIdx={selectedIdx}
+                onSelect={setSelectedIdx}
+                skipFactor={skipFactor}
+              />
+            ) : (
+              <PctChart
+                points={points}
+                xPos={xPos}
+                svgW={svgW}
+                selectedIdx={selectedIdx}
+                onSelect={setSelectedIdx}
+                skipFactor={skipFactor}
+              />
+            )}
+          </View>
+        </View>
+      )}
+
+      {/* ── Summary cards ── */}
+      {hasData && (
+        <View style={s.cards}>
+          <View style={s.summaryCard}>
+            <Text style={s.cardLabel}>Avg weight</Text>
+            <Text style={[s.cardValue, { color: '#534AB7' }]}>
+              {stats.avgW != null ? `${stats.avgW.toFixed(1)} kg` : '—'}
+            </Text>
+          </View>
+          <View style={s.summaryCard}>
+            <Text style={s.cardLabel}>Sugar days</Text>
+            <Text style={[s.cardValue, { color: '#993556' }]}>
+              {stats.avgSugar != null ? `${Math.round(stats.avgSugar)}%` : '—'}
+            </Text>
+          </View>
+          <View style={s.summaryCard}>
+            <Text style={s.cardLabel}>Exercise days</Text>
+            <Text style={[s.cardValue, { color: '#0F6E56' }]}>
+              {stats.avgEx != null ? `${Math.round(stats.avgEx)}%` : '—'}
+            </Text>
+          </View>
         </View>
       )}
     </View>
   );
 }
 
-/* ── Sub-components ── */
-
-function LegendDot({ color, label }: { color: string; label: string }) {
-  return (
-    <View style={styles.legendItem}>
-      <View style={[styles.legendDot, { backgroundColor: color }]} />
-      <Text style={styles.legendText}>{label}</Text>
-    </View>
-  );
-}
-
-function InsightCard({
-  icon, title, leftLabel, leftValue, rightLabel, rightValue, lowerIsBetter,
-}: {
-  icon: string; title: string;
-  leftLabel: string; leftValue: number;
-  rightLabel: string; rightValue: number;
-  lowerIsBetter: boolean;
-}) {
-  const delta = leftValue - rightValue;
-  const healthyDelta = lowerIsBetter ? delta < 0 : delta > 0;
-  const absDelta = Math.abs(delta);
-  const direction = lowerIsBetter
-    ? (delta < 0 ? 'lighter' : 'heavier')
-    : (delta > 0 ? 'heavier' : 'lighter');
-  const deltaColor = healthyDelta ? C.green : absDelta < 0.1 ? C.textSec : C.red;
-
-  return (
-    <View style={styles.insightCard}>
-      <View style={styles.insightCardHeader}>
-        <Text style={styles.insightCardIcon}>{icon}</Text>
-        <Text style={styles.insightCardTitle}>{title} impact</Text>
-      </View>
-      <View style={styles.insightStats}>
-        <View style={styles.insightStat}>
-          <Text style={styles.insightStatValue}>{leftValue.toFixed(1)} kg</Text>
-          <Text style={styles.insightStatLabel}>{leftLabel}</Text>
-        </View>
-        <View style={styles.insightDivider} />
-        <View style={styles.insightStat}>
-          <Text style={styles.insightStatValue}>{rightValue.toFixed(1)} kg</Text>
-          <Text style={styles.insightStatLabel}>{rightLabel}</Text>
-        </View>
-      </View>
-      {absDelta >= 0.1 && (
-        <View style={[styles.insightDeltaBadge, {
-          backgroundColor: deltaColor + '18',
-          borderColor: deltaColor + '40',
-        }]}>
-          <Text style={[styles.insightDeltaText, { color: deltaColor }]}>
-            {leftLabel} avg {absDelta.toFixed(1)} kg {direction} on {rightLabel.toLowerCase()}
-          </Text>
-        </View>
-      )}
-    </View>
-  );
-}
-
-/* ── Styles ── */
-
-const styles = StyleSheet.create({
-  container: {
-    backgroundColor: C.card,
+/* ─────────────────────────────────────────
+   STYLES
+───────────────────────────────────────── */
+const s = StyleSheet.create({
+  card: {
+    backgroundColor: '#FFFFFF',
     borderRadius: 20,
     borderWidth: 1,
     borderColor: C.border,
-    overflow: 'hidden',
     marginBottom: 24,
+    paddingTop: 18,
+    paddingBottom: 20,
+    paddingHorizontal: 16,
     shadowColor: '#000',
     shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.06,
-    shadowRadius: 12,
+    shadowOpacity: 0.05,
+    shadowRadius: 14,
     elevation: 3,
+    overflow: 'visible',
   },
-
-  periodBar: {
+  controlsWrap: {
+    gap: 0,
+  },
+  pillRow: {
     flexDirection: 'row',
-    borderBottomWidth: 1,
-    borderBottomColor: C.border,
+    backgroundColor: C.pill,
+    borderRadius: 22,
+    padding: 2,
+    alignSelf: 'flex-start',
+    gap: 1,
   },
-  periodBtn: { flex: 1, paddingVertical: 12, alignItems: 'center' },
-  periodBtnActive: { borderBottomWidth: 2, borderBottomColor: C.accent },
-  periodText: { fontSize: 13, fontWeight: '500', color: C.textSec },
-  periodTextActive: { color: C.accent, fontWeight: '700' },
-
+  pillBtn: {
+    paddingHorizontal: 11,
+    paddingVertical: 7,
+    borderRadius: 20,
+  },
+  pillBtnOn: {
+    backgroundColor: C.pillActive,
+  },
+  pillTxt: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: '#9A9082',
+  },
+  pillTxtOn: {
+    color: C.pillActiveText,
+  },
+  rangeTxt: {
+    fontSize: 11,
+    color: '#9A9082',
+    marginTop: 7,
+    letterSpacing: 0.15,
+  },
   legend: {
     flexDirection: 'row',
-    paddingHorizontal: 16,
-    paddingVertical: 10,
-    gap: 14,
-    borderBottomWidth: 1,
-    borderBottomColor: C.border,
     flexWrap: 'wrap',
+    gap: 14,
+    marginTop: 14,
+    marginBottom: 10,
   },
-  legendItem: { flexDirection: 'row', alignItems: 'center', gap: 5 },
-  legendDot: { width: 8, height: 8, borderRadius: 4 },
-  legendText: { fontSize: 11, color: C.textSec },
-
-  chartWrap: { paddingHorizontal: 16, paddingTop: 12, paddingBottom: 8 },
-  axisLabel: {
-    fontSize: 11,
-    fontWeight: '600',
-    color: C.textSec,
-    textTransform: 'uppercase',
-    letterSpacing: 0.6,
-    marginBottom: 4,
+  legendItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
   },
-
-  empty: { alignItems: 'center', paddingVertical: 48 },
-  emptyText: { fontSize: 14, color: C.textSec },
-
-  insightSection: {
-    padding: 16,
-    borderTopWidth: 1,
-    borderTopColor: C.border,
-    gap: 12,
+  swatchLine: {
+    width: 16,
+    height: 3,
+    borderRadius: 1.5,
   },
-  insightHeading: {
-    fontSize: 12,
-    fontWeight: '700',
-    color: C.textSec,
-    textTransform: 'uppercase',
-    letterSpacing: 0.8,
-    marginBottom: 4,
-  },
-  insightCard: {
-    backgroundColor: C.cardDeep,
-    borderRadius: 14,
-    padding: 14,
-    gap: 10,
-  },
-  insightCardHeader: { flexDirection: 'row', alignItems: 'center', gap: 6 },
-  insightCardIcon: { fontSize: 16 },
-  insightCardTitle: { fontSize: 13, fontWeight: '700', color: C.text },
-  insightStats: { flexDirection: 'row', alignItems: 'center' },
-  insightStat: { flex: 1, alignItems: 'center', gap: 2 },
-  insightStatValue: { fontSize: 20, fontWeight: '800', color: C.text, letterSpacing: -0.5 },
-  insightStatLabel: { fontSize: 11, color: C.textSec },
-  insightDivider: { width: 1, height: 36, backgroundColor: C.border },
-  insightDeltaBadge: {
-    borderRadius: 8,
+  swatchBox: {
+    width: 11,
+    height: 11,
+    borderRadius: 2,
     borderWidth: 1,
-    paddingHorizontal: 10,
-    paddingVertical: 6,
   },
-  insightDeltaText: { fontSize: 12, fontWeight: '600', textAlign: 'center' },
+  legendTxt: {
+    fontSize: 11,
+    color: '#9A9082',
+  },
+  chartWrap: {
+    marginHorizontal: -16,
+    overflow: 'visible',
+  },
+  empty: {
+    alignItems: 'center',
+    paddingVertical: 52,
+    gap: 8,
+  },
+  emptyEmoji: { fontSize: 38 },
+  emptyTitle: { fontSize: 16, fontWeight: '600', color: C.text },
+  emptyDesc: { fontSize: 13, color: C.textMuted, textAlign: 'center' },
+  cards: {
+    flexDirection: 'row',
+    gap: 10,
+    marginTop: 18,
+  },
+  summaryCard: {
+    flex: 1,
+    backgroundColor: '#FAFAF8',
+    borderRadius: 14,
+    padding: 12,
+    gap: 4,
+    borderWidth: 1,
+    borderColor: 'rgba(0,0,0,0.05)',
+  },
+  cardLabel: {
+    fontSize: 10,
+    fontWeight: '600',
+    color: '#9A9082',
+    letterSpacing: 0.3,
+    textTransform: 'uppercase',
+  },
+  cardValue: {
+    fontSize: 20,
+    fontWeight: '800',
+    letterSpacing: -0.5,
+  },
 });
