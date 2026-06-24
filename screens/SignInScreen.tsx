@@ -137,7 +137,7 @@ export default function SignInScreen() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const redirectTo = AuthSession.makeRedirectUri();
+  const redirectTo = AuthSession.makeRedirectUri({ scheme: 'tinutracker' });
 
   const signInWithGoogle = async () => {
     setLoading(true);
