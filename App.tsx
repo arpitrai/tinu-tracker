@@ -32,7 +32,7 @@ export default function App() {
   if (loading) {
     return (
       <View style={styles.centered}>
-        <ActivityIndicator size="large" color="#1C6EF2" />
+        <ActivityIndicator size="large" color="#7C3AED" />
         <StatusBar style="dark" />
       </View>
     );

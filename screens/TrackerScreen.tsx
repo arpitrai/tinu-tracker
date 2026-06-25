@@ -19,6 +19,7 @@ import TrendsChart from '../components/TrendsChart';
 import ProfileMenu from '../components/ProfileMenu';
 import ProfileModal from '../components/ProfileModal';
 import SplitToggle from '../components/SplitToggle';
+import CalendarModal from '../components/CalendarModal';
 import Svg, { Path } from 'react-native-svg';
 
 function NavListIcon({ color }: { color: string }) {
@@ -92,6 +93,41 @@ function formatDatePretty(dateStr: string): string {
   return `${wd}, ${d} ${mon}`;
 }
 
+const HistoryRow = React.memo(function HistoryRow({
+  entry,
+  isLast,
+  onPress,
+}: {
+  entry: DayEntry;
+  isLast: boolean;
+  onPress: (date: string) => void;
+}) {
+  return (
+    <TouchableOpacity
+      style={[styles.historyRow, !isLast && styles.historyRowBorder]}
+      onPress={() => onPress(entry.date)}
+      activeOpacity={0.65}
+    >
+      <Text style={[styles.historyDateLabel, styles.historyDateCol]}>
+        {formatDateShort(entry.date)}
+      </Text>
+      <View style={styles.historyExCol}>
+        {entry.exercised !== null && (
+          <View style={[styles.indicatorDot, { backgroundColor: entry.exercised ? P.green : P.red }]} />
+        )}
+      </View>
+      <View style={styles.historySugCol}>
+        {entry.ate_sweets !== null && (
+          <View style={[styles.indicatorDot, { backgroundColor: entry.ate_sweets ? P.red : P.green }]} />
+        )}
+      </View>
+      <Text style={[styles.historyWeightText, styles.historyWtCol]}>
+        {entry.weight ? String(entry.weight) : ''}
+      </Text>
+    </TouchableOpacity>
+  );
+});
+
 interface Props { user: User; }
 
 export default function TrackerScreen({ user }: Props) {
@@ -112,6 +148,7 @@ export default function TrackerScreen({ user }: Props) {
 
   const [menuVisible, setMenuVisible] = useState(false);
   const [profileVisible, setProfileVisible] = useState(false);
+  const [calendarVisible, setCalendarVisible] = useState(false);
   const [displayName, setDisplayName] = useState(() => getFirstName(user));
   const [avatarUrl, setAvatarUrl] = useState<string | null>(() => getAvatarUrl(user));
   const [avatarError, setAvatarError] = useState(false);
@@ -152,7 +189,7 @@ export default function TrackerScreen({ user }: Props) {
 
   useEffect(() => { loadData(); }, [loadData]);
 
-  function navigateToDate(newDate: string) {
+  const navigateToDate = useCallback((newDate: string) => {
     setSelectedDate(newDate);
     const entry = allEntries.get(newDate);
     if (entry) {
@@ -166,7 +203,7 @@ export default function TrackerScreen({ user }: Props) {
     }
     setJustSaved(false);
     setIsEditing(false);
-  }
+  }, [allEntries]);
 
   const goLeft = () => { if (!isEditing) navigateToDate(offsetDateStr(selectedDate, -1)); };
   const goRight = () => { if (!isToday && !isEditing) navigateToDate(offsetDateStr(selectedDate, 1)); };
@@ -224,15 +261,17 @@ export default function TrackerScreen({ user }: Props) {
 
   const chartEntries = useMemo(() => Array.from(allEntries.values()), [allEntries]);
 
-  // Last 365 days (not including today — today is shown in the day card)
+  // Last 30 days (not including today — today is shown in the day card)
   const recentEntries = useMemo<DayEntry[]>(() => {
     const result: DayEntry[] = [];
-    for (let i = 1; i <= 365; i++) {
+    for (let i = 1; i <= 30; i++) {
       const d = offsetDateStr(today, -i);
       result.push(allEntries.get(d) ?? { date: d, exercised: null, ate_sweets: null, weight: null });
     }
     return result;
   }, [allEntries, today]);
+
+  const hasEntryFor = useCallback((d: string) => allEntries.has(d), [allEntries]);
 
   function getDateStatus(): { text: string; tone: 'muted' | 'saved' | 'edit' } {
     if (isEditing) return { text: 'Editing…', tone: 'edit' };
@@ -284,6 +323,14 @@ export default function TrackerScreen({ user }: Props) {
         avatarUrl={avatarUrl}
         onNameSaved={(name) => setDisplayName(name.split(' ')[0] || name)}
       />
+      <CalendarModal
+        visible={calendarVisible}
+        selectedDate={selectedDate}
+        today={today}
+        hasEntry={hasEntryFor}
+        onSelect={navigateToDate}
+        onClose={() => setCalendarVisible(false)}
+      />
 
       <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'} style={styles.flex}>
         <ScrollView contentContainerStyle={styles.scroll} keyboardShouldPersistTaps="handled">
@@ -300,8 +347,16 @@ export default function TrackerScreen({ user }: Props) {
                 >
                   <Text style={styles.dateNavText}>‹</Text>
                 </TouchableOpacity>
-                <View style={styles.dateCenter}>
-                  <Text style={styles.dateMain}>{formatDatePretty(selectedDate)}</Text>
+                <TouchableOpacity
+                  style={styles.dateCenter}
+                  onPress={() => setCalendarVisible(true)}
+                  disabled={isEditing}
+                  activeOpacity={0.7}
+                >
+                  <View style={styles.dateMainRow}>
+                    <Text style={styles.dateMain}>{formatDatePretty(selectedDate)}</Text>
+                    <Text style={styles.dateCaret}> ⌄</Text>
+                  </View>
                   {(() => {
                     const st = getDateStatus();
                     return (
@@ -314,7 +369,7 @@ export default function TrackerScreen({ user }: Props) {
                       </Text>
                     );
                   })()}
-                </View>
+                </TouchableOpacity>
                 <TouchableOpacity
                   style={[styles.dateNav, (isToday || isEditing) && styles.dateNavOff]}
                   onPress={goRight}
@@ -434,8 +489,12 @@ export default function TrackerScreen({ user }: Props) {
                       )}
                     </TouchableOpacity>
                   )}
-                  {nothingEntered && !readOnly && !isEditing && !justSaved && (
-                    <Text style={styles.saveHint}>Tap an answer to begin</Text>
+                  {!readOnly && (
+                    <View style={styles.saveHintWrap}>
+                      {nothingEntered && !isEditing && !justSaved && (
+                        <Text style={styles.saveHint}>Tap an answer to begin</Text>
+                      )}
+                    </View>
                   )}
                 </View>
               </View>
@@ -451,36 +510,12 @@ export default function TrackerScreen({ user }: Props) {
                 </View>
 
                 {recentEntries.map((entry, i) => (
-                  <TouchableOpacity
+                  <HistoryRow
                     key={entry.date}
-                    style={[styles.historyRow, i < recentEntries.length - 1 && styles.historyRowBorder]}
-                    onPress={() => navigateToDate(entry.date)}
-                    activeOpacity={0.65}
-                  >
-                    <Text style={[styles.historyDateLabel, styles.historyDateCol]}>
-                      {formatDateShort(entry.date)}
-                    </Text>
-                    {/* Exercise dot */}
-                    <View style={styles.historyExCol}>
-                      {entry.exercised !== null && (
-                        <View style={[styles.indicatorDot, {
-                          backgroundColor: entry.exercised ? P.green : P.red,
-                        }]} />
-                      )}
-                    </View>
-                    {/* Sugar dot */}
-                    <View style={styles.historySugCol}>
-                      {entry.ate_sweets !== null && (
-                        <View style={[styles.indicatorDot, {
-                          backgroundColor: entry.ate_sweets ? P.red : P.green,
-                        }]} />
-                      )}
-                    </View>
-                    {/* Weight — blank if not recorded */}
-                    <Text style={[styles.historyWeightText, styles.historyWtCol]}>
-                      {entry.weight ? String(entry.weight) : ''}
-                    </Text>
-                  </TouchableOpacity>
+                    entry={entry}
+                    isLast={i === recentEntries.length - 1}
+                    onPress={navigateToDate}
+                  />
                 ))}
               </View>
             </>
@@ -522,14 +557,14 @@ export default function TrackerScreen({ user }: Props) {
 /* ── Design tokens ── */
 
 const P = {
-  bg: '#FFFFFF',
-  surface: '#FAFAF8',
+  bg: '#FFFDFB',
+  surface: '#FBF7F2',
   text: '#1C1915',
   textMuted: '#9A9082',
-  divider: '#F0EEE8',
-  navBtnBg: '#F2F1EE',
-  primary: '#1C6EF2',
-  primaryLight: '#EEF4FF',
+  divider: '#F1ECE5',
+  navBtnBg: '#F3EFEA',
+  primary: '#7C3AED',
+  primaryLight: '#F3EEFE',
   green: '#10B981',
   red: '#EF4444',
 };
@@ -595,10 +630,12 @@ const styles = StyleSheet.create({
   dateNavOff: { opacity: 0.35, backgroundColor: 'transparent', shadowOpacity: 0, elevation: 0 },
   dateNavText: { fontSize: 20, color: P.text, fontWeight: '400', lineHeight: 24 },
   dateCenter: { alignItems: 'center' },
+  dateMainRow: { flexDirection: 'row', alignItems: 'center' },
   dateMain: { fontSize: 15, fontWeight: '800', color: P.text, letterSpacing: -0.2 },
+  dateCaret: { fontSize: 13, fontWeight: '800', color: P.textMuted, marginTop: -2 },
   dateSub: { fontSize: 11, fontWeight: '700', color: P.textMuted, marginTop: 1 },
   dateSubSaved: { color: '#0F8A66' },
-  dateSubEdit: { color: '#534AB7' },
+  dateSubEdit: { color: '#7C3AED' },
 
   // Entry section
   entrySection: { paddingTop: 6, gap: 18 },
@@ -622,7 +659,7 @@ const styles = StyleSheet.create({
     paddingVertical: 16,
     alignItems: 'center',
   },
-  wtEmptyText: { color: '#534AB7', fontWeight: '700', fontSize: 15 },
+  wtEmptyText: { color: '#7C3AED', fontWeight: '700', fontSize: 15 },
   wtBox: {
     backgroundColor: '#F4F1FD',
     borderRadius: 16,
@@ -640,20 +677,20 @@ const styles = StyleSheet.create({
     backgroundColor: '#FFFFFF',
     alignItems: 'center',
     justifyContent: 'center',
-    shadowColor: '#534AB7',
+    shadowColor: '#7C3AED',
     shadowOffset: { width: 0, height: 2 },
     shadowOpacity: 0.18,
     shadowRadius: 5,
     elevation: 2,
   },
-  wtStepText: { fontSize: 22, color: '#534AB7', fontWeight: '700', lineHeight: 24 },
+  wtStepText: { fontSize: 22, color: '#7C3AED', fontWeight: '700', lineHeight: 24 },
   wtSpacer: { width: 38 },
   wtVal: { flexDirection: 'row', alignItems: 'baseline', gap: 3 },
-  wtNum: { fontSize: 28, fontWeight: '800', color: '#534AB7', letterSpacing: -0.5 },
+  wtNum: { fontSize: 28, fontWeight: '800', color: '#7C3AED', letterSpacing: -0.5 },
   wtNumInput: {
     fontSize: 28,
     fontWeight: '800',
-    color: '#534AB7',
+    color: '#7C3AED',
     letterSpacing: -0.5,
     textAlign: 'center',
     minWidth: 86,
@@ -665,7 +702,7 @@ const styles = StyleSheet.create({
   actionWrap: {},
   editBtn: {
     borderWidth: 1.5,
-    borderColor: '#CFE0FE',
+    borderColor: '#E3D7FB',
     borderRadius: 16,
     height: 52,
     alignItems: 'center',
@@ -684,13 +721,14 @@ const styles = StyleSheet.create({
     shadowRadius: 12,
     elevation: 4,
   },
-  saveBtnEdit: { backgroundColor: '#534AB7', shadowColor: '#534AB7' },
+  saveBtnEdit: { backgroundColor: '#7C3AED', shadowColor: '#7C3AED' },
   saveBtnDone: { backgroundColor: '#059669', shadowColor: '#059669' },
-  saveBtnWait: { backgroundColor: '#EEF0F3', shadowOpacity: 0, elevation: 0 },
+  saveBtnWait: { backgroundColor: '#F2EDE7', shadowOpacity: 0, elevation: 0 },
   saveBtnWaitText: { color: '#C8C0B8' },
   disabled: { opacity: 0.4 },
   saveBtnText: { color: '#fff', fontSize: 15.5, fontWeight: '700', letterSpacing: 0.1 },
-  saveHint: { textAlign: 'center', fontSize: 12, color: P.textMuted, marginTop: 9 },
+  saveHintWrap: { height: 30, justifyContent: 'center' },
+  saveHint: { textAlign: 'center', fontSize: 12, color: P.textMuted },
 
   // Bottom nav
   bottomNav: {

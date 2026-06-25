@@ -132,10 +132,10 @@ export default function ProfileModal({ visible, onClose, user, avatarUrl, onName
 }
 
 const M3 = {
-  primary: '#1C6EF2',
+  primary: '#7C3AED',
   onPrimary: '#FFFFFF',
-  primaryContainer: '#D8E2FF',
-  onPrimaryContainer: '#001252',
+  primaryContainer: '#ECE0FF',
+  onPrimaryContainer: '#2A0A5E',
   surface: '#FEFBFF',
   onSurface: '#1B1B1F',
   surfaceVariant: '#E1E2EC',

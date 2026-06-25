@@ -15,7 +15,7 @@ const SOFT: Record<string, { bg: string; text: string }> = {
   '#EF4444': { bg: '#FDECEC', text: '#B3261E' },
 };
 
-export default function SplitToggle({ value, onChange, yesColor, noColor, locked }: Props) {
+function SplitToggle({ value, onChange, yesColor, noColor, locked }: Props) {
   const renderOpt = (label: string, target: boolean) => {
     const selected = value === target;
     const color = target ? yesColor : noColor;
@@ -57,6 +57,8 @@ export default function SplitToggle({ value, onChange, yesColor, noColor, locked
     </View>
   );
 }
+
+export default React.memo(SplitToggle);
 
 const styles = StyleSheet.create({
   row: { flexDirection: 'row', gap: 10 },
