@@ -7,6 +7,8 @@ import {
   ActivityIndicator,
   SafeAreaView,
   Linking,
+  Platform,
+  StatusBar,
 } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import Svg, { Path, Circle } from 'react-native-svg';
@@ -194,7 +196,8 @@ export default function SignInScreen() {
 
 const styles = StyleSheet.create({
   root: { flex: 1 },
-  safe: { flex: 1 },
+  // SafeAreaView only insets on iOS; pad past the status bar manually on Android.
+  safe: { flex: 1, paddingTop: Platform.OS === 'android' ? StatusBar.currentHeight : 0 },
 
   hero: {
     flex: 1,
