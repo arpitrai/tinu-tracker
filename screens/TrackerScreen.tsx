@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, useMemo } from 'react';
+import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import {
   StyleSheet,
   Text,
@@ -12,7 +12,11 @@ import {
   ActivityIndicator,
   Image,
   StatusBar,
+  Animated,
+  Easing,
+  BackHandler,
 } from 'react-native';
+import { LinearGradient } from 'expo-linear-gradient';
 import { supabase } from '../lib/supabase';
 import type { User } from '@supabase/supabase-js';
 import TrendsChart from '../components/TrendsChart';
@@ -47,6 +51,8 @@ interface DayEntry {
 }
 
 type Tab = 'entries' | 'trend';
+
+const NAV_ACCENT_W = 42; // width of the sliding gradient accent bar
 
 function todayKey(): string {
   return new Date().toISOString().split('T')[0];
@@ -136,6 +142,18 @@ export default function TrackerScreen({ user }: Props) {
 
   const [activeTab, setActiveTab] = useState<Tab>('entries');
   const [selectedDate, setSelectedDate] = useState(today);
+
+  // Bottom-nav sliding accent bar (concept: Top Accent Slide)
+  const [navWidth, setNavWidth] = useState(0);
+  const navIndicator = useRef(new Animated.Value(0)).current; // 0 = Daily Log, 1 = Trend
+  useEffect(() => {
+    Animated.timing(navIndicator, {
+      toValue: activeTab === 'entries' ? 0 : 1,
+      duration: 300,
+      easing: Easing.out(Easing.cubic),
+      useNativeDriver: true,
+    }).start();
+  }, [activeTab, navIndicator]);
   const [allEntries, setAllEntries] = useState<Map<string, DayEntry>>(new Map());
   const [loading, setLoading] = useState(true);
 
@@ -205,10 +223,10 @@ export default function TrackerScreen({ user }: Props) {
     setIsEditing(false);
   }, [allEntries]);
 
-  const goLeft = () => { if (!isEditing) navigateToDate(offsetDateStr(selectedDate, -1)); };
-  const goRight = () => { if (!isToday && !isEditing) navigateToDate(offsetDateStr(selectedDate, 1)); };
+  const goLeft = () => navigateToDate(offsetDateStr(selectedDate, -1));
+  const goRight = () => { if (!isToday) navigateToDate(offsetDateStr(selectedDate, 1)); };
 
-  function handleCancelEdit() {
+  const handleCancelEdit = useCallback(() => {
     const entry = allEntries.get(selectedDate);
     if (entry) {
       setExercised(entry.exercised);
@@ -216,7 +234,17 @@ export default function TrackerScreen({ user }: Props) {
       setWeight(entry.weight != null ? String(entry.weight) : '');
     }
     setIsEditing(false);
-  }
+  }, [allEntries, selectedDate]);
+
+  // Hardware back while editing reverts to the saved view (replaces the old Cancel button).
+  useEffect(() => {
+    const onBack = () => {
+      if (isEditing) { handleCancelEdit(); return true; }
+      return false;
+    };
+    const sub = BackHandler.addEventListener('hardwareBackPress', onBack);
+    return () => sub.remove();
+  }, [isEditing, handleCancelEdit]);
 
   // Seed the weight stepper with the most recent recorded weight (or a default).
   function handleAddWeight() {
@@ -282,6 +310,12 @@ export default function TrackerScreen({ user }: Props) {
     return { text: rel ? `${rel} · not logged` : 'Not logged', tone: 'muted' };
   }
 
+  // Slide the accent bar to the centre of the active tab (two equal-width tabs).
+  const accentTranslate = navIndicator.interpolate({
+    inputRange: [0, 1],
+    outputRange: [navWidth / 4 - NAV_ACCENT_W / 2, (navWidth * 3) / 4 - NAV_ACCENT_W / 2],
+  });
+
   if (loading) {
     return (
       <View style={styles.loadingScreen}>
@@ -295,19 +329,13 @@ export default function TrackerScreen({ user }: Props) {
       {/* ── Header ── */}
       <View style={styles.header}>
         <Text style={styles.greeting}>Hi {displayName}</Text>
-        {isEditing && activeTab === 'entries' ? (
-          <TouchableOpacity onPress={handleCancelEdit} activeOpacity={0.7}>
-            <Text style={styles.cancelText}>Cancel</Text>
-          </TouchableOpacity>
-        ) : (
-          <TouchableOpacity onPress={() => setMenuVisible(true)} style={styles.avatarBtn}>
-            {avatarUrl && !avatarError ? (
-              <Image source={{ uri: avatarUrl }} style={styles.avatarImg} onError={() => setAvatarError(true)} />
-            ) : (
-              <Text style={styles.avatarText}>{displayName.charAt(0).toUpperCase()}</Text>
-            )}
-          </TouchableOpacity>
-        )}
+        <TouchableOpacity onPress={() => setMenuVisible(true)} style={styles.avatarBtn}>
+          {avatarUrl && !avatarError ? (
+            <Image source={{ uri: avatarUrl }} style={styles.avatarImg} onError={() => setAvatarError(true)} />
+          ) : (
+            <Text style={styles.avatarText}>{displayName.charAt(0).toUpperCase()}</Text>
+          )}
+        </TouchableOpacity>
       </View>
 
       <ProfileMenu
@@ -340,9 +368,8 @@ export default function TrackerScreen({ user }: Props) {
               {/* ── Date row (own row, back/forth arrows) ── */}
               <View style={styles.dateRow}>
                 <TouchableOpacity
-                  style={[styles.dateNav, isEditing && styles.dateNavOff]}
+                  style={styles.dateNav}
                   onPress={goLeft}
-                  disabled={isEditing}
                   activeOpacity={0.7}
                 >
                   <Text style={styles.dateNavText}>‹</Text>
@@ -350,7 +377,6 @@ export default function TrackerScreen({ user }: Props) {
                 <TouchableOpacity
                   style={styles.dateCenter}
                   onPress={() => setCalendarVisible(true)}
-                  disabled={isEditing}
                   activeOpacity={0.7}
                 >
                   <View style={styles.dateMainRow}>
@@ -371,9 +397,9 @@ export default function TrackerScreen({ user }: Props) {
                   })()}
                 </TouchableOpacity>
                 <TouchableOpacity
-                  style={[styles.dateNav, (isToday || isEditing) && styles.dateNavOff]}
+                  style={[styles.dateNav, isToday && styles.dateNavOff]}
                   onPress={goRight}
-                  disabled={isToday || isEditing}
+                  disabled={isToday}
                   activeOpacity={0.7}
                 >
                   <Text style={styles.dateNavText}>›</Text>
@@ -462,7 +488,7 @@ export default function TrackerScreen({ user }: Props) {
                 <View style={styles.actionWrap}>
                   {readOnly ? (
                     <TouchableOpacity style={styles.editBtn} onPress={() => setIsEditing(true)} activeOpacity={0.85}>
-                      <Text style={styles.editBtnText}>Edit entry</Text>
+                      <Text style={styles.editBtnText}>Edit</Text>
                     </TouchableOpacity>
                   ) : (
                     <TouchableOpacity
@@ -484,7 +510,7 @@ export default function TrackerScreen({ user }: Props) {
                           styles.saveBtnText,
                           nothingEntered && !isEditing && styles.saveBtnWaitText,
                         ]}>
-                          {justSaved ? '✓  Saved' : isEditing ? 'Save changes' : 'Save day'}
+                          {justSaved ? '✓  Saved' : 'Save'}
                         </Text>
                       )}
                     </TouchableOpacity>
@@ -535,18 +561,24 @@ export default function TrackerScreen({ user }: Props) {
         </ScrollView>
       </KeyboardAvoidingView>
 
-      {/* ── Bottom navigation ── */}
-      <View style={styles.bottomNav}>
+      {/* ── Bottom navigation (Top Accent Slide) ── */}
+      <View style={styles.bottomNav} onLayout={e => setNavWidth(e.nativeEvent.layout.width)}>
+        {navWidth > 0 && (
+          <Animated.View style={[styles.navAccent, { transform: [{ translateX: accentTranslate }] }]}>
+            <LinearGradient
+              colors={['#F59E0B', '#F43F5E']}
+              start={{ x: 0, y: 0 }}
+              end={{ x: 1, y: 0 }}
+              style={styles.navAccentFill}
+            />
+          </Animated.View>
+        )}
         <TouchableOpacity style={styles.navItem} onPress={() => setActiveTab('entries')} activeOpacity={0.7}>
-          <View style={[styles.navIndicator, activeTab === 'entries' && styles.navIndicatorActive]}>
-            <NavListIcon color={activeTab === 'entries' ? P.primary : P.textMuted} />
-          </View>
+          <NavListIcon color={activeTab === 'entries' ? P.text : P.textMuted} />
           <Text style={[styles.navLabel, activeTab === 'entries' && styles.navLabelActive]}>Daily Log</Text>
         </TouchableOpacity>
         <TouchableOpacity style={styles.navItem} onPress={() => setActiveTab('trend')} activeOpacity={0.7}>
-          <View style={[styles.navIndicator, activeTab === 'trend' && styles.navIndicatorActive]}>
-            <NavTrendIcon color={activeTab === 'trend' ? P.primary : P.textMuted} />
-          </View>
+          <NavTrendIcon color={activeTab === 'trend' ? P.text : P.textMuted} />
           <Text style={[styles.navLabel, activeTab === 'trend' && styles.navLabelActive]}>Trend</Text>
         </TouchableOpacity>
       </View>
@@ -591,7 +623,6 @@ const styles = StyleSheet.create({
     paddingBottom: 12,
   },
   greeting: { fontSize: 19, fontWeight: '800', color: P.text, letterSpacing: -0.3 },
-  cancelText: { fontSize: 14, fontWeight: '700', color: P.textMuted },
   avatarBtn: {
     width: 38,
     height: 38,
@@ -656,14 +687,15 @@ const styles = StyleSheet.create({
     borderColor: '#D6CFE9',
     borderStyle: 'dashed',
     borderRadius: 16,
-    paddingVertical: 16,
+    height: 60,            // match wtBox so the layout doesn't shift between states
     alignItems: 'center',
+    justifyContent: 'center',
   },
   wtEmptyText: { color: '#7C3AED', fontWeight: '700', fontSize: 15 },
   wtBox: {
     backgroundColor: '#F4F1FD',
     borderRadius: 16,
-    paddingVertical: 11,
+    height: 60,            // fixed so empty/filled/locked states are all the same height
     paddingHorizontal: 16,
     flexDirection: 'row',
     alignItems: 'center',
@@ -730,26 +762,29 @@ const styles = StyleSheet.create({
   saveHintWrap: { height: 30, justifyContent: 'center' },
   saveHint: { textAlign: 'center', fontSize: 12, color: P.textMuted },
 
-  // Bottom nav
+  // Bottom nav (Top Accent Slide)
   bottomNav: {
     flexDirection: 'row',
     backgroundColor: P.bg,
     borderTopWidth: 1,
     borderTopColor: P.divider,
-    paddingTop: 10,
+    paddingTop: 14,
     paddingBottom: 16,
   },
-  navItem: { flex: 1, alignItems: 'center', gap: 4 },
-  navIndicator: {
-    width: 58,
-    height: 30,
-    borderRadius: 15,
-    alignItems: 'center',
-    justifyContent: 'center',
+  navAccent: {
+    position: 'absolute',
+    top: -1.5,
+    left: 0,
+    width: NAV_ACCENT_W,
+    height: 3,
+    borderBottomLeftRadius: 4,
+    borderBottomRightRadius: 4,
+    overflow: 'hidden',
   },
-  navIndicatorActive: { backgroundColor: P.primaryLight },
+  navAccentFill: { flex: 1 },
+  navItem: { flex: 1, alignItems: 'center', gap: 5 },
   navLabel: { fontSize: 11, fontWeight: '500', color: P.textMuted, letterSpacing: 0.3 },
-  navLabelActive: { color: P.primary, fontWeight: '700' },
+  navLabelActive: { color: P.text, fontWeight: '700' },
 
   // Empty state
   emptyState: { alignItems: 'center', paddingTop: 80, gap: 10 },
