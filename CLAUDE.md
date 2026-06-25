@@ -23,11 +23,13 @@ npx jest -t "deselects"           # Run tests matching a name pattern
 
 Builds are distributed via EAS (`eas.json`); the `preview` profile outputs an installable Android APK.
 
+App icons in `assets/` are generated from the `PulseRiseIcon` brand mark (defined in `SignInScreen.tsx`) — the amber→rose gradient pulse glyph. After regenerating the PNGs, run `expo prebuild -p android` and rebuild; native launcher icons are baked at build time and do **not** update via Fast Refresh.
+
 ## Architecture
 
 A single-screen-at-a-time habit tracker (exercise / sugar / weight). No navigation library — `App.tsx` is the router: it reads the Supabase session and renders **`SignInScreen`** (no session) or **`TrackerScreen`** (authenticated). Auth state changes are wired through `supabase.auth.onAuthStateChange`, so sign-in/out swaps the screen automatically.
 
-**Auth** is Google OAuth via Supabase. `SignInScreen` opens the OAuth URL with `expo-web-browser`, then manually extracts tokens from the redirect (`tinutracker://` scheme — declared in `app.json`) and calls `supabase.auth.setSession`. Sessions persist in **AsyncStorage** (see `lib/supabase.ts`) — do **not** switch to `expo-secure-store` for session storage; it caused issues and was deliberately replaced.
+**Auth** is Google OAuth via Supabase. `SignInScreen` opens the OAuth URL with `expo-web-browser`, then manually extracts tokens from the redirect (`tinutracker://` scheme — declared in `app.json`) and calls `supabase.auth.setSession`. Sessions persist in **AsyncStorage** (see `lib/supabase.ts`) — do **not** switch to `expo-secure-store` for session storage; it caused issues and was deliberately replaced. Google sign-in does **not** complete on the Android emulator (Google shows a generic "something went wrong" page) — test auth on a real device or the web build. The redirect URL (`tinutracker://`) and any web origins must be allow-listed in Supabase → Authentication → URL Configuration.
 
 **Data model** lives in one Supabase table, `entries`, keyed by `(user_id, date)`. Columns: `exercised` (bool|null), `ate_sweets` (bool|null), `weight` (string|null). Writes use `upsert(..., { onConflict: 'user_id,date' })`. `TrackerScreen` loads the user's entire history once into an in-memory `Map<dateStr, DayEntry>` and derives everything (recent list, chart data, date navigation) from that map — there is no per-day fetch.
 
@@ -37,12 +39,14 @@ A single-screen-at-a-time habit tracker (exercise / sugar / weight). No navigati
 
 **Trends** (`components/TrendsChart.tsx`) is a hand-rolled SVG chart built on `react-native-svg` (weight line + area, boolean rows, percentage bars). It is not a charting-library config — layout is driven by the pixel constants at the top of the file.
 
-### Layout conventions
+### UI & layout conventions
 
 - `screens/` — the two top-level screens.
 - `components/` — presentational + modal components (`ProfileMenu`, `ProfileModal`, `CalendarModal`, `SplitToggle`/`TriToggle`, `TrendsChart`).
 - `lib/supabase.ts` — the single Supabase client.
 - Each screen/component owns its own `StyleSheet` and a local design-token object (commonly named `P` or `C`). There is no shared theme module; colors are defined per-file.
+- **No layout shift between states.** Controls are deliberately given a constant height across their read-only / editable / empty / locked states (e.g. the weight box is a fixed `60`; the action area always renders a 30px spacer even when empty). The user treats vertical jumps as a bug — when a control changes by state, keep its height fixed rather than conditionally rendering elements that change layout height.
+- **Android safe area.** React Native's `SafeAreaView` only insets on iOS. Top-level screens pad the status bar manually with `paddingTop: Platform.OS === 'android' ? StatusBar.currentHeight : 0` — do this for any new full-screen view.
 
 ## Testing
 
@@ -59,4 +63,9 @@ Requires `.env` with `EXPO_PUBLIC_SUPABASE_URL` and `EXPO_PUBLIC_SUPABASE_ANON_K
 
 ## UI verification
 
-When changing UI, verify visually — run the web build (`npm run web`) and drive it with Playwright (available as a dev dependency) rather than assuming the layout is correct.
+When changing UI, verify visually rather than assuming the layout is correct. Two routes:
+
+- **Web** (`npm run web`) driven with Playwright (a dev dependency) — fastest, and the only place Google sign-in works locally (see Auth note above).
+- **Android emulator** — build/install a dev client with `npm run android`, then iterate via Fast Refresh; relaunch the activity (`adb shell monkey -p com.arpitrai.tinutracker -c android.intent.category.LAUNCHER 1`) to force a fresh bundle, and screenshot with `adb exec-out screencap -p > shot.png`.
+
+The app requires a **development build, not Expo Go** — `victory-native` / `@shopify/react-native-skia` are native modules Expo Go does not bundle.
