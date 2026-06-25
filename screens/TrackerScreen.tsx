@@ -515,13 +515,9 @@ export default function TrackerScreen({ user }: Props) {
                       )}
                     </TouchableOpacity>
                   )}
-                  {!readOnly && (
-                    <View style={styles.saveHintWrap}>
-                      {nothingEntered && !isEditing && !justSaved && (
-                        <Text style={styles.saveHint}>Tap an answer to begin</Text>
-                      )}
-                    </View>
-                  )}
+                  {/* Empty spacer kept so the action block is a constant height in every
+                      state (read-only / editable / editing) — prevents layout shift. */}
+                  <View style={styles.saveHintWrap} />
                 </View>
               </View>
 
@@ -759,8 +755,7 @@ const styles = StyleSheet.create({
   saveBtnWaitText: { color: '#C8C0B8' },
   disabled: { opacity: 0.4 },
   saveBtnText: { color: '#fff', fontSize: 15.5, fontWeight: '700', letterSpacing: 0.1 },
-  saveHintWrap: { height: 30, justifyContent: 'center' },
-  saveHint: { textAlign: 'center', fontSize: 12, color: P.textMuted },
+  saveHintWrap: { height: 30 },
 
   // Bottom nav (Top Accent Slide)
   bottomNav: {
