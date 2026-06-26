@@ -13,6 +13,7 @@ import {
   ScrollView,
   Image,
   StatusBar,
+  Alert,
 } from 'react-native';
 import { supabase } from '../lib/supabase';
 import type { User } from '@supabase/supabase-js';
@@ -28,6 +29,7 @@ interface Props {
 export default function ProfileModal({ visible, onClose, user, avatarUrl, onNameSaved }: Props) {
   const [name, setName] = useState('');
   const [saving, setSaving] = useState(false);
+  const [deleting, setDeleting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [imgError, setImgError] = useState(false);
 
@@ -56,6 +58,37 @@ export default function ProfileModal({ visible, onClose, user, avatarUrl, onName
     setSaving(false);
   };
 
+  const handleDeleteAccount = async () => {
+    setDeleting(true);
+    setError(null);
+    try {
+      // Server-side RPC (SECURITY DEFINER) — removes the user's entries and their
+      // auth.users record. The client can't delete an auth user directly.
+      const { error: delErr } = await supabase.rpc('delete_user_account');
+      if (delErr) throw delErr;
+      // signOut clears the now-orphaned session; App.tsx then swaps to SignInScreen.
+      await supabase.auth.signOut();
+      // No further state updates: this screen unmounts once the session clears.
+    } catch (e: any) {
+      setError(e.message ?? 'Could not delete your account. Please try again.');
+      setDeleting(false);
+    }
+  };
+
+  const confirmDeleteAccount = () => {
+    Alert.alert(
+      'Delete account?',
+      'This permanently deletes your account and all of your logged data. ' +
+        'This cannot be undone and your data is not recoverable.',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        { text: 'Delete', style: 'destructive', onPress: handleDeleteAccount },
+      ],
+    );
+  };
+
+  const busy = saving || deleting;
+
   return (
     <Modal visible={visible} animationType="slide" onRequestClose={onClose}>
       <SafeAreaView style={styles.safeArea}>
@@ -64,8 +97,8 @@ export default function ProfileModal({ visible, onClose, user, avatarUrl, onName
           style={styles.flex}
         >
           <View style={styles.header}>
-            <TouchableOpacity onPress={onClose} style={styles.cancelBtn}>
-              <Text style={styles.cancelText}>Cancel</Text>
+            <TouchableOpacity onPress={onClose} style={styles.cancelBtn} disabled={busy}>
+              <Text style={[styles.cancelText, busy && styles.btnDisabled]}>Cancel</Text>
             </TouchableOpacity>
             <Text style={styles.title}>Profile</Text>
             <View style={styles.headerSpacer} />
@@ -114,9 +147,9 @@ export default function ProfileModal({ visible, onClose, user, avatarUrl, onName
             {error ? <Text style={styles.errorText}>{error}</Text> : null}
 
             <TouchableOpacity
-              style={[styles.primaryBtn, saving && styles.btnDisabled]}
+              style={[styles.primaryBtn, busy && styles.btnDisabled]}
               onPress={handleSave}
-              disabled={saving}
+              disabled={busy}
               activeOpacity={0.85}
             >
               {saving ? (
@@ -125,6 +158,29 @@ export default function ProfileModal({ visible, onClose, user, avatarUrl, onName
                 <Text style={styles.primaryBtnText}>Save</Text>
               )}
             </TouchableOpacity>
+
+            {/* Danger zone — irreversible account deletion.
+                Temporarily disabled until the delete flow is verified end-to-end.
+                The handlers (confirmDeleteAccount / handleDeleteAccount) and the
+                delete_user_account RPC are still in place — re-enable by uncommenting.
+            <View style={styles.dangerZone}>
+              <TouchableOpacity
+                style={[styles.deleteBtn, busy && styles.btnDisabled]}
+                onPress={confirmDeleteAccount}
+                disabled={busy}
+                activeOpacity={0.85}
+              >
+                {deleting ? (
+                  <ActivityIndicator color={M3.error} />
+                ) : (
+                  <Text style={styles.deleteBtnText}>Delete account</Text>
+                )}
+              </TouchableOpacity>
+              <Text style={styles.deleteHint}>
+                Permanently deletes your account and all logged data. This cannot be undone.
+              </Text>
+            </View>
+            */}
           </ScrollView>
         </KeyboardAvoidingView>
       </SafeAreaView>
@@ -227,6 +283,24 @@ const styles = StyleSheet.create({
   primaryBtnText: { color: M3.onPrimary, fontSize: 14, fontWeight: '500', letterSpacing: 0.1 },
 
   errorText: { fontSize: 13, color: M3.error, textAlign: 'center' },
+
+  dangerZone: {
+    marginTop: 16,
+    paddingTop: 20,
+    borderTopWidth: 1,
+    borderTopColor: M3.outlineVariant,
+    gap: 8,
+  },
+  deleteBtn: {
+    borderRadius: 100,
+    borderWidth: 1,
+    borderColor: M3.error,
+    paddingVertical: 14,
+    alignItems: 'center',
+    backgroundColor: M3.surface,
+  },
+  deleteBtnText: { color: M3.error, fontSize: 14, fontWeight: '500', letterSpacing: 0.1 },
+  deleteHint: { fontSize: 12, color: M3.onSurfaceVariant, textAlign: 'center', lineHeight: 18 },
 
   otpHeading: {
     fontSize: 28,
