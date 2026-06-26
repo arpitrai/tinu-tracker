@@ -5,6 +5,7 @@ import {
   View,
   TextInput,
   TouchableOpacity,
+  Pressable,
   ScrollView,
   KeyboardAvoidingView,
   Platform,
@@ -24,6 +25,7 @@ import ProfileMenu from '../components/ProfileMenu';
 import ProfileModal from '../components/ProfileModal';
 import SplitToggle from '../components/SplitToggle';
 import CalendarModal from '../components/CalendarModal';
+import HistoryTable from '../components/HistoryTable';
 import Svg, { Path } from 'react-native-svg';
 
 function NavListIcon({ color }: { color: string }) {
@@ -38,6 +40,14 @@ function NavTrendIcon({ color }: { color: string }) {
   return (
     <Svg width={22} height={22} viewBox="0 0 24 24">
       <Path d="M4 18L9 12L13 15L20 7" stroke={color} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+    </Svg>
+  );
+}
+
+function ChevronDownIcon({ color }: { color: string }) {
+  return (
+    <Svg width={14} height={14} viewBox="0 0 24 24">
+      <Path d="M6 9L12 15L18 9" stroke={color} strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" />
     </Svg>
   );
 }
@@ -83,13 +93,6 @@ function getAvatarUrl(user: User): string | null {
   ) ?? null;
 }
 
-function formatDateShort(dateStr: string): string {
-  const [y, m, d] = dateStr.split('-').map(Number);
-  return new Date(y, m - 1, d).toLocaleDateString('en-US', {
-    weekday: 'short', month: 'short', day: 'numeric',
-  });
-}
-
 // "Thu, 25 Jun"
 function formatDatePretty(dateStr: string): string {
   const [y, m, d] = dateStr.split('-').map(Number);
@@ -98,41 +101,6 @@ function formatDatePretty(dateStr: string): string {
   const mon = dt.toLocaleDateString('en-US', { month: 'short' });
   return `${wd}, ${d} ${mon}`;
 }
-
-const HistoryRow = React.memo(function HistoryRow({
-  entry,
-  isLast,
-  onPress,
-}: {
-  entry: DayEntry;
-  isLast: boolean;
-  onPress: (date: string) => void;
-}) {
-  return (
-    <TouchableOpacity
-      style={[styles.historyRow, !isLast && styles.historyRowBorder]}
-      onPress={() => onPress(entry.date)}
-      activeOpacity={0.65}
-    >
-      <Text style={[styles.historyDateLabel, styles.historyDateCol]}>
-        {formatDateShort(entry.date)}
-      </Text>
-      <View style={styles.historyExCol}>
-        {entry.exercised !== null && (
-          <View style={[styles.indicatorDot, { backgroundColor: entry.exercised ? P.green : P.red }]} />
-        )}
-      </View>
-      <View style={styles.historySugCol}>
-        {entry.ate_sweets !== null && (
-          <View style={[styles.indicatorDot, { backgroundColor: entry.ate_sweets ? P.red : P.green }]} />
-        )}
-      </View>
-      <Text style={[styles.historyWeightText, styles.historyWtCol]}>
-        {entry.weight ? String(entry.weight) : ''}
-      </Text>
-    </TouchableOpacity>
-  );
-});
 
 interface Props { user: User; }
 
@@ -381,7 +349,9 @@ export default function TrackerScreen({ user }: Props) {
                 >
                   <View style={styles.dateMainRow}>
                     <Text style={styles.dateMain}>{formatDatePretty(selectedDate)}</Text>
-                    <Text style={styles.dateCaret}> ⌄</Text>
+                    <View style={styles.dateCaret}>
+                      <ChevronDownIcon color={P.textMuted} />
+                    </View>
                   </View>
                   {(() => {
                     const st = getDateStatus();
@@ -487,9 +457,16 @@ export default function TrackerScreen({ user }: Props) {
                 {/* Action */}
                 <View style={styles.actionWrap}>
                   {readOnly ? (
-                    <TouchableOpacity style={styles.editBtn} onPress={() => setIsEditing(true)} activeOpacity={0.85}>
+                    // Pressable (not TouchableOpacity): the legacy Touchable responder
+                    // intermittently loses the tap to the ScrollView's pan responder,
+                    // which is why Edit sometimes needed several taps.
+                    <Pressable
+                      style={({ pressed }) => [styles.editBtn, pressed && styles.editBtnPressed]}
+                      onPress={() => setIsEditing(true)}
+                      hitSlop={8}
+                    >
                       <Text style={styles.editBtnText}>Edit</Text>
-                    </TouchableOpacity>
+                    </Pressable>
                   ) : (
                     <TouchableOpacity
                       style={[
@@ -522,37 +499,14 @@ export default function TrackerScreen({ user }: Props) {
               </View>
 
               {/* ── Recent history ── */}
-              <View style={styles.historyCard}>
-                {/* Column headers */}
-                <View style={styles.historyHeaderRow}>
-                  <View style={styles.historyDateCol} />
-                  <Text style={[styles.historyColLabel, styles.historyExCol]}>Exercise</Text>
-                  <Text style={[styles.historyColLabel, styles.historySugCol]}>Sugar</Text>
-                  <Text style={[styles.historyColLabel, styles.historyWtCol]}>Weight</Text>
-                </View>
-
-                {recentEntries.map((entry, i) => (
-                  <HistoryRow
-                    key={entry.date}
-                    entry={entry}
-                    isLast={i === recentEntries.length - 1}
-                    onPress={navigateToDate}
-                  />
-                ))}
-              </View>
+              <HistoryTable entries={recentEntries} onRowPress={navigateToDate} />
             </>
           ) : (
-            <>
-              {chartEntries.length > 0 ? (
-                <TrendsChart entries={chartEntries} />
-              ) : (
-                <View style={styles.emptyState}>
-                  <Text style={styles.emptyIcon}>📊</Text>
-                  <Text style={styles.emptyTitle}>No data yet</Text>
-                  <Text style={styles.emptyDesc}>Log some entries to see your trends here.</Text>
-                </View>
-              )}
-            </>
+            <TrendsChart
+              entries={chartEntries}
+              today={today}
+              onJumpToDate={(d) => { navigateToDate(d); setActiveTab('entries'); }}
+            />
           )}
         </ScrollView>
       </KeyboardAvoidingView>
@@ -659,7 +613,7 @@ const styles = StyleSheet.create({
   dateCenter: { alignItems: 'center' },
   dateMainRow: { flexDirection: 'row', alignItems: 'center' },
   dateMain: { fontSize: 15, fontWeight: '800', color: P.text, letterSpacing: -0.2 },
-  dateCaret: { fontSize: 13, fontWeight: '800', color: P.textMuted, marginTop: -2 },
+  dateCaret: { marginLeft: 5, marginTop: 2 },
   dateSub: { fontSize: 11, fontWeight: '700', color: P.textMuted, marginTop: 1 },
   dateSubSaved: { color: '#0F8A66' },
   dateSubEdit: { color: '#7C3AED' },
@@ -736,6 +690,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
+  editBtnPressed: { opacity: 0.6, backgroundColor: '#F8F4FE' },
   editBtnText: { color: P.primary, fontSize: 15.5, fontWeight: '700', letterSpacing: 0.1 },
   saveBtn: {
     backgroundColor: P.primary,
@@ -780,70 +735,4 @@ const styles = StyleSheet.create({
   navItem: { flex: 1, alignItems: 'center', gap: 5 },
   navLabel: { fontSize: 11, fontWeight: '500', color: P.textMuted, letterSpacing: 0.3 },
   navLabelActive: { color: P.text, fontWeight: '700' },
-
-  // Empty state
-  emptyState: { alignItems: 'center', paddingTop: 80, gap: 10 },
-  emptyIcon: { fontSize: 48 },
-  emptyTitle: { fontSize: 22, fontWeight: '500', color: P.text },
-  emptyDesc: { fontSize: 14, color: P.textMuted, textAlign: 'center' },
-
-  // History card
-  historyCard: {
-    backgroundColor: P.surface,
-    borderRadius: 22,
-    paddingHorizontal: 16,
-    paddingTop: 12,
-    paddingBottom: 8,
-  },
-
-  // History column layout (shared between header and rows)
-  historyDateCol: { flex: 1 },
-  historyExCol: { width: 64, alignItems: 'center' },
-  historySugCol: { width: 52, alignItems: 'center' },
-  historyWtCol: { width: 56, textAlign: 'right' },
-
-  // History header row
-  historyHeaderRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingBottom: 8,
-    borderBottomWidth: 1,
-    borderBottomColor: P.divider,
-    marginBottom: 2,
-  },
-  historyColLabel: {
-    fontSize: 10,
-    fontWeight: '700',
-    color: P.textMuted,
-    letterSpacing: 0.5,
-    textTransform: 'uppercase',
-    textAlign: 'center',
-  },
-
-  // History data rows
-  historyRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingVertical: 11,
-  },
-  historyRowBorder: {
-    borderBottomWidth: 1,
-    borderBottomColor: P.divider,
-  },
-  historyDateLabel: {
-    fontSize: 13,
-    color: P.text,
-    fontWeight: '400',
-  },
-  indicatorDot: {
-    width: 9,
-    height: 9,
-    borderRadius: 5,
-  },
-  historyWeightText: {
-    fontSize: 13,
-    color: P.textMuted,
-    fontWeight: '500',
-    fontVariant: ['tabular-nums'],
-  },
 });

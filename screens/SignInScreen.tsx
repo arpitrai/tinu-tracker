@@ -3,9 +3,11 @@ import {
   StyleSheet,
   Text,
   View,
+  TextInput,
   TouchableOpacity,
   ActivityIndicator,
   SafeAreaView,
+  KeyboardAvoidingView,
   Linking,
   Platform,
   StatusBar,
@@ -87,8 +89,45 @@ function cellColor(col: number, level: number, cols: number): string {
 export default function SignInScreen() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // Hidden email/password path — primarily so app-store reviewers can sign in
+  // without Google OAuth (Google blocks reviewer logins as suspicious new devices).
+  // Not shown to normal users: revealed by tapping the brand logo 5 times. The
+  // App access notes in Play Console tell reviewers to do this.
+  const [emailMode, setEmailMode] = useState(false);
+  const [logoTaps, setLogoTaps] = useState(0);
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
 
   const redirectTo = AuthSession.makeRedirectUri({ scheme: 'tinutracker' });
+
+  const handleLogoTap = () => {
+    if (emailMode) return;
+    setLogoTaps(n => {
+      if (n + 1 >= 5) {
+        setError(null);
+        setEmailMode(true);
+        return 0;
+      }
+      return n + 1;
+    });
+  };
+
+  const signInWithEmail = async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      const { error } = await supabase.auth.signInWithPassword({
+        email: email.trim(),
+        password,
+      });
+      if (error) throw error;
+      // onAuthStateChange in App.tsx swaps to TrackerScreen on success.
+    } catch (e: any) {
+      setError(e.message ?? 'Sign in failed. Please try again.');
+    } finally {
+      setLoading(false);
+    }
+  };
 
   const signInWithGoogle = async () => {
     setLoading(true);
@@ -128,14 +167,16 @@ export default function SignInScreen() {
         <View style={styles.hero}>
           {/* Brand row */}
           <View style={styles.brandRow}>
-            <LinearGradient
-              colors={['#F59E0B', '#F43F5E']}
-              start={{ x: 0, y: 0 }}
-              end={{ x: 1, y: 1 }}
-              style={styles.logoTile}
-            >
-              <PulseRiseIcon size={26} />
-            </LinearGradient>
+            <TouchableOpacity activeOpacity={1} onPress={handleLogoTap}>
+              <LinearGradient
+                colors={['#F59E0B', '#F43F5E']}
+                start={{ x: 0, y: 0 }}
+                end={{ x: 1, y: 1 }}
+                style={styles.logoTile}
+              >
+                <PulseRiseIcon size={26} />
+              </LinearGradient>
+            </TouchableOpacity>
             <Text style={styles.brandName}>Tinu Tracker</Text>
           </View>
 
@@ -160,26 +201,86 @@ export default function SignInScreen() {
         </View>
 
         {/* ── CTA ── */}
-        <View style={styles.cta}>
+        <KeyboardAvoidingView
+          behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+          style={styles.cta}
+        >
           {error ? <Text style={styles.error}>{error}</Text> : null}
 
-          <TouchableOpacity
-            style={[styles.googleBtn, loading && styles.disabled]}
-            onPress={signInWithGoogle}
-            disabled={loading}
-            activeOpacity={0.88}
-          >
-            {loading ? (
-              <ActivityIndicator color="#fff" />
-            ) : (
-              <>
-                <View style={styles.googleChip}>
-                  <GoogleIcon size={16} />
-                </View>
-                <Text style={styles.googleBtnText}>Continue with Google</Text>
-              </>
-            )}
-          </TouchableOpacity>
+          {emailMode ? (
+            <>
+              <TextInput
+                style={styles.input}
+                placeholder="Email"
+                placeholderTextColor="#B0998D"
+                value={email}
+                onChangeText={setEmail}
+                autoCapitalize="none"
+                autoCorrect={false}
+                keyboardType="email-address"
+                textContentType="emailAddress"
+                editable={!loading}
+              />
+              <TextInput
+                style={styles.input}
+                placeholder="Password"
+                placeholderTextColor="#B0998D"
+                value={password}
+                onChangeText={setPassword}
+                secureTextEntry
+                autoCapitalize="none"
+                autoCorrect={false}
+                textContentType="password"
+                editable={!loading}
+                onSubmitEditing={signInWithEmail}
+                returnKeyType="go"
+              />
+              <TouchableOpacity
+                style={[styles.googleBtn, loading && styles.disabled]}
+                onPress={signInWithEmail}
+                disabled={loading}
+                activeOpacity={0.88}
+              >
+                {loading ? (
+                  <ActivityIndicator color="#fff" />
+                ) : (
+                  <Text style={styles.googleBtnText}>Sign in</Text>
+                )}
+              </TouchableOpacity>
+            </>
+          ) : (
+            <TouchableOpacity
+              style={[styles.googleBtn, loading && styles.disabled]}
+              onPress={signInWithGoogle}
+              disabled={loading}
+              activeOpacity={0.88}
+            >
+              {loading ? (
+                <ActivityIndicator color="#fff" />
+              ) : (
+                <>
+                  <View style={styles.googleChip}>
+                    <GoogleIcon size={16} />
+                  </View>
+                  <Text style={styles.googleBtnText}>Continue with Google</Text>
+                </>
+              )}
+            </TouchableOpacity>
+          )}
+
+          {/* Only shown once the hidden email path is unlocked — lets you back out. */}
+          {emailMode ? (
+            <TouchableOpacity
+              onPress={() => {
+                setError(null);
+                setEmailMode(false);
+              }}
+              disabled={loading}
+              hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+            >
+              <Text style={styles.altLink}>Continue with Google instead</Text>
+            </TouchableOpacity>
+          ) : null}
 
           {/* Consent line — privacy policy link (required by app stores) */}
           <Text style={styles.consent}>
@@ -188,7 +289,7 @@ export default function SignInScreen() {
               Privacy Policy
             </Text>
           </Text>
-        </View>
+        </KeyboardAvoidingView>
       </SafeAreaView>
     </LinearGradient>
   );
@@ -270,6 +371,20 @@ const styles = StyleSheet.create({
   disabled: { opacity: 0.5 },
   googleBtnText: { fontSize: 15, fontWeight: '700', color: '#FFFFFF', letterSpacing: 0.1 },
   error: { color: '#DC2626', fontSize: 13, textAlign: 'center' },
+
+  // Email/password fields (secondary path)
+  input: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: '#F0E2D8',
+    paddingHorizontal: 16,
+    paddingVertical: 15,
+    fontSize: 15,
+    fontWeight: '500',
+    color: '#2A1A14',
+  },
+  altLink: { fontSize: 13, fontWeight: '700', color: '#E0533F', textAlign: 'center' },
 
   // Consent line
   consent: { fontSize: 11, lineHeight: 15, fontWeight: '500', color: '#B0998D', textAlign: 'center' },

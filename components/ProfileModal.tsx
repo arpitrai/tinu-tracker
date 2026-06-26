@@ -12,6 +12,7 @@ import {
   SafeAreaView,
   ScrollView,
   Image,
+  StatusBar,
 } from 'react-native';
 import { supabase } from '../lib/supabase';
 import type { User } from '@supabase/supabase-js';
@@ -146,7 +147,13 @@ const M3 = {
 };
 
 const styles = StyleSheet.create({
-  safeArea: { flex: 1, backgroundColor: M3.surface },
+  safeArea: {
+    flex: 1,
+    backgroundColor: M3.surface,
+    // Android Modal/SafeAreaView don't inset the status bar — pad it manually so
+    // the header lines up with the data-entry screen (see TrackerScreen.safeArea).
+    paddingTop: Platform.OS === 'android' ? StatusBar.currentHeight : 0,
+  },
   flex: { flex: 1 },
 
   header: {
