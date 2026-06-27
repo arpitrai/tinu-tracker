@@ -3,20 +3,12 @@ import {
   View,
   Text,
   TouchableOpacity,
-  Pressable,
   StyleSheet,
   useWindowDimensions,
 } from 'react-native';
-import Svg, {
-  Path,
-  Rect,
-  Circle as SvgCircle,
-  Line as SvgLine,
-  Text as SvgText,
-  Defs,
-  LinearGradient as SvgLinearGradient,
-  Stop,
-} from 'react-native-svg';
+import { CartesianChart, Line, Area, useChartPressState } from 'victory-native';
+import { Circle, Line as SkiaLine, LinearGradient, useFont, vec } from '@shopify/react-native-skia';
+import { useAnimatedReaction, runOnJS } from 'react-native-reanimated';
 import HistoryTable, { HistoryEntry } from './HistoryTable';
 import DateRangeModal from './DateRangeModal';
 
@@ -32,7 +24,6 @@ const C = {
   text: '#1C1915',
   textMuted: '#9A9082',
   border: 'rgba(0,0,0,0.06)',
-  tooltip: '#1C1915',
   pill: '#F2F1EE',
   pillActive: '#3C3489',
   pillActiveText: '#EEEDFE',
@@ -41,13 +32,8 @@ const C = {
 /* ─────────────────────────────────────────
    CHART LAYOUT CONSTANTS
 ───────────────────────────────────────── */
-const Y_LEFT = 44;      // left margin: space for Y-axis labels
-const Y_RIGHT = 14;     // right margin
-const WEIGHT_H = 180;   // weight plot height
-const PT = 12;          // chart pad top
-const X_AXIS_H = 24;    // x-axis tick area height
-const DOT_R = 3.5;
-const DOT_R_SEL = 5.5;  // selected data point radius
+const CHART_H = 200;    // canvas height (plot + axes)
+const READOUT_H = 36;   // fixed-height value readout above the chart
 
 /* ─────────────────────────────────────────
    TYPES
@@ -113,28 +99,6 @@ function fmtPretty(dateStr: string): string {
 
 function numAvg(nums: number[]): number | null {
   return nums.length ? nums.reduce((a, b) => a + b, 0) / nums.length : null;
-}
-
-/* ─────────────────────────────────────────
-   SVG PATH HELPER (Catmull-Rom → cubic bézier)
-───────────────────────────────────────── */
-function catmullRom(pts: { x: number; y: number }[]): string {
-  if (pts.length === 0) return '';
-  if (pts.length === 1) return `M ${pts[0].x} ${pts[0].y}`;
-  let d = `M ${pts[0].x.toFixed(2)} ${pts[0].y.toFixed(2)}`;
-  const t = 1 / 3;
-  for (let i = 0; i < pts.length - 1; i++) {
-    const p0 = pts[Math.max(i - 1, 0)];
-    const p1 = pts[i];
-    const p2 = pts[i + 1];
-    const p3 = pts[Math.min(i + 2, pts.length - 1)];
-    const cp1x = p1.x + (p2.x - p0.x) * t;
-    const cp1y = p1.y + (p2.y - p0.y) * t;
-    const cp2x = p2.x - (p3.x - p1.x) * t;
-    const cp2y = p2.y - (p3.y - p1.y) * t;
-    d += ` C ${cp1x.toFixed(2)} ${cp1y.toFixed(2)},${cp2x.toFixed(2)} ${cp2y.toFixed(2)},${p2.x.toFixed(2)} ${p2.y.toFixed(2)}`;
-  }
-  return d;
 }
 
 /* ─────────────────────────────────────────
@@ -217,174 +181,161 @@ function buildPoints(
 }
 
 /* ─────────────────────────────────────────
-   WEIGHT CHART
+   WEIGHT CHART  (native — victory-native + Skia)
+
+   Replaces the hand-rolled SVG chart. victory-native owns axis tick
+   placement, so x-axis date labels no longer collide; `tickCount` caps
+   the number of evenly-spaced labels regardless of data density.
 ───────────────────────────────────────── */
-function WeightChart({
-  points, gran, svgW, selectedIdx, onSelect,
-}: {
-  points: Point[];
-  gran: Gran;
-  svgW: number;
-  selectedIdx: number | null;
-  onSelect: (i: number | null) => void;
-}) {
-  const svgH = PT + WEIGHT_H + X_AXIS_H;
-  const plotW = svgW - Y_LEFT - Y_RIGHT;
+
+function lastReadingIdx(points: Point[]): number | null {
+  for (let i = points.length - 1; i >= 0; i--) {
+    if (points[i].weight !== null) return i;
+  }
+  return null;
+}
+
+function WeightChart({ points, svgW }: { points: Point[]; svgW: number }) {
+  // Numeric-index x so the scale is linear; the date string is mapped back
+  // via formatXLabel. null weights become gaps in the line/area.
+  const data = useMemo<{ i: number; weight: number | null }[]>(
+    () => points.map((p, i) => ({ i, weight: p.weight })),
+    [points],
+  );
+  const labels = useMemo(() => points.map(p => p.label), [points]);
   const n = points.length;
 
-  const xPos = useMemo(() => {
-    if (n === 0) return [];
-    if (gran === 'D') {
-      return points.map((_, i) => Y_LEFT + (n <= 1 ? plotW / 2 : (i * plotW) / (n - 1)));
-    }
-    const slotW = plotW / n;
-    return points.map((_, i) => Y_LEFT + (i + 0.5) * slotW);
-  }, [points, n, plotW, gran]);
+  // Font for Skia-rendered axis labels. A bundled .ttf (via useFont) works on
+  // both native and web — unlike matchFont, which needs the OS font manager
+  // that CanvasKit-on-web lacks. Null while loading; labels appear once ready.
+  const axisFont = useFont(require('../assets/fonts/Roboto-Regular.ttf'), 10);
 
-  const validWeights = points.map(p => p.weight).filter((w): w is number => w !== null);
+  const { state } = useChartPressState({ x: 0, y: { weight: 0 } });
 
-  if (!validWeights.length) {
+  // Mirror the press position into React state so the readout (plain RN text)
+  // can show the touched point; clears to null when the finger lifts.
+  const [activeIdx, setActiveIdx] = useState<number | null>(null);
+  useAnimatedReaction(
+    () => ({ active: state.isActive.value, x: state.x.value.value }),
+    (cur) => {
+      runOnJS(setActiveIdx)(cur.active ? Math.round(cur.x as number) : null);
+    },
+    [],
+  );
+
+  const hasData = points.some(p => p.weight !== null);
+  if (!hasData) {
     return (
-      <Svg width={svgW} height={svgH}>
-        <SvgText x={svgW / 2} y={svgH / 2} fontSize={12.5} fill={C.textMuted} textAnchor="middle">
-          No weight logged in this period
-        </SvgText>
-      </Svg>
+      <View style={[s.chartEmpty, { width: svgW }]}>
+        <Text style={s.chartEmptyText}>No weight logged in this period</Text>
+      </View>
     );
   }
 
-  const wMin = Math.min(...validWeights) - 1.5;
-  const wMax = Math.max(...validWeights) + 1.5;
-  const wRange = wMax - wMin || 1;
+  // Up to 6 evenly-spaced x ticks — victory keeps them from overlapping.
+  const tickCount = Math.max(2, Math.min(6, n));
 
-  const tickStep = wRange > 10 ? 5 : wRange > 5 ? 2 : wRange > 2 ? 1 : 0.5;
-  const tickStart = Math.ceil(wMin / tickStep) * tickStep;
-  const ticks: number[] = [];
-  for (let v = tickStart; v <= wMax + tickStep * 0.01; v = Math.round((v + tickStep) * 1000) / 1000) {
-    ticks.push(v);
-  }
+  // Fixed y-axis headroom: 10 kg below the lowest logged weight and 10 kg above
+  // the highest, instead of fitting tightly to the data range.
+  const validWeights = points
+    .map(p => p.weight)
+    .filter((w): w is number => w !== null);
+  const yDomain: [number, number] = [
+    Math.min(...validWeights) - 10,
+    Math.max(...validWeights) + 10,
+  ];
 
-  const yFor = (w: number) => PT + (1 - (w - wMin) / wRange) * WEIGHT_H;
-  const bottomY = PT + WEIGHT_H;
-  const skipFactor = Math.max(1, Math.ceil(n / 8));
-  const tapW = n > 1 ? Math.max(Math.abs(xPos[1] - xPos[0]), 22) : Math.max(plotW, 22);
-
-  const TT_W = 124; const TT_H = 48;
-
-  // Consecutive non-null segments for the line.
-  const segments: { i: number; x: number; y: number }[][] = [];
-  let cur: { i: number; x: number; y: number }[] = [];
-  for (let i = 0; i < points.length; i++) {
-    if (points[i].weight !== null) {
-      cur.push({ i, x: xPos[i], y: yFor(points[i].weight!) });
-    } else if (cur.length) {
-      segments.push(cur); cur = [];
-    }
-  }
-  if (cur.length) segments.push(cur);
+  const readoutIdx =
+    activeIdx != null && points[activeIdx]?.weight != null ? activeIdx : lastReadingIdx(points);
+  const readout = readoutIdx != null ? points[readoutIdx] : null;
 
   return (
     <View style={{ width: svgW }}>
-    <Svg width={svgW} height={svgH} style={{ overflow: 'visible' }}>
-      <Defs>
-        <SvgLinearGradient id="wArea" x1="0" y1="0" x2="0" y2="1">
-          <Stop offset="0%" stopColor={C.weight} stopOpacity={0.14} />
-          <Stop offset="100%" stopColor={C.weight} stopOpacity={0.0} />
-        </SvgLinearGradient>
-      </Defs>
+      {/* Fixed-height readout — shows the latest reading, or the touched point
+          while pressing. Constant height avoids layout shift. */}
+      <View style={s.readout}>
+        {readout?.weight != null && (
+          <>
+            <Text style={s.readoutVal}>
+              {readout.weight.toFixed(1)}
+              <Text style={s.readoutUnit}> kg</Text>
+            </Text>
+            <Text style={s.readoutDate}>{readout.tooltip}</Text>
+          </>
+        )}
+      </View>
 
-      {/* Y grid + labels */}
-      {ticks.map((v, ti) => {
-        const y = yFor(v);
-        if (y < PT - 4 || y > bottomY + 4) return null;
-        return (
-          <React.Fragment key={ti}>
-            <SvgLine x1={Y_LEFT} y1={y} x2={Y_LEFT + plotW} y2={y} stroke={C.axisLine} strokeWidth={1} />
-            <SvgText x={Y_LEFT - 7} y={y + 4} fontSize={10} fill={C.axis} textAnchor="end">
-              {v % 1 === 0 ? v.toFixed(0) : v.toFixed(1)}
-            </SvgText>
-          </React.Fragment>
-        );
-      })}
-
-      {/* Area fills */}
-      {segments.map((seg, si) => {
-        if (seg.length < 2) return null;
-        const linePath = catmullRom(seg.map(p => ({ x: p.x, y: p.y })));
-        const areaD = `${linePath} L ${seg[seg.length - 1].x} ${bottomY} L ${seg[0].x} ${bottomY} Z`;
-        return <Path key={si} d={areaD} fill="url(#wArea)" />;
-      })}
-
-      {/* Lines */}
-      {segments.map((seg, si) => {
-        if (seg.length < 2) return null;
-        return (
-          <Path
-            key={si}
-            d={catmullRom(seg.map(p => ({ x: p.x, y: p.y })))}
-            stroke={C.weight} strokeWidth={2.5}
-            fill="none" strokeLinecap="round" strokeLinejoin="round"
-          />
-        );
-      })}
-
-      {/* Data points */}
-      {n <= 95 && points.map((p, i) => {
-        if (p.weight === null) return null;
-        const sel = i === selectedIdx;
-        return (
-          <React.Fragment key={i}>
-            <SvgCircle cx={xPos[i]} cy={yFor(p.weight)} r={(sel ? DOT_R_SEL : DOT_R) + 1.5} fill="white" />
-            <SvgCircle cx={xPos[i]} cy={yFor(p.weight)} r={sel ? DOT_R_SEL : DOT_R} fill={C.weight} />
-          </React.Fragment>
-        );
-      })}
-
-      {/* X-axis */}
-      <SvgLine x1={Y_LEFT} y1={bottomY} x2={Y_LEFT + plotW} y2={bottomY} stroke={C.axisLine} strokeWidth={1} />
-      {points.map((p, i) => {
-        if (i !== 0 && i !== n - 1 && i % skipFactor !== 0) return null;
-        const anchor = i === 0 ? 'start' : i === n - 1 ? 'end' : 'middle';
-        return (
-          <SvgText key={i} x={xPos[i]} y={bottomY + X_AXIS_H - 6} fontSize={9.5} fill={C.axis} textAnchor={anchor}>
-            {p.label}
-          </SvgText>
-        );
-      })}
-
-      {/* Tooltip (drawn in SVG; no onPress here so no web responder warnings) */}
-      {selectedIdx !== null && points[selectedIdx]?.weight != null && (() => {
-        const p = points[selectedIdx];
-        const cx = xPos[selectedIdx];
-        const cy = yFor(p.weight!);
-        const ttX = Math.min(Math.max(cx - TT_W / 2, 2), svgW - TT_W - 2);
-        const ttY = Math.max(cy - TT_H - 14, 2);
-        return (
-          <React.Fragment>
-            <SvgLine x1={cx} y1={PT} x2={cx} y2={bottomY} stroke={C.weight} strokeWidth={1} strokeDasharray="3 3" opacity={0.4} />
-            <Rect x={ttX} y={ttY} width={TT_W} height={TT_H} rx={9} fill={C.tooltip} />
-            <SvgText x={ttX + TT_W / 2} y={ttY + 20} fontSize={15} fontWeight="700" fill="white" textAnchor="middle">
-              {p.weight!.toFixed(1)} kg
-            </SvgText>
-            <SvgText x={ttX + TT_W / 2} y={ttY + 37} fontSize={9.5} fill="rgba(255,255,255,0.6)" textAnchor="middle">
-              {p.tooltip}
-            </SvgText>
-          </React.Fragment>
-        );
-      })()}
-    </Svg>
-
-    {/* Tap overlay — real RN Pressables (not SVG onPress) so taps work on web/native cleanly. */}
-    {points.map((p, i) => {
-      if (p.weight === null) return null;
-      return (
-        <Pressable
-          key={i}
-          onPress={() => onSelect(i === selectedIdx ? null : i)}
-          style={{ position: 'absolute', left: xPos[i] - tapW / 2, top: PT, width: tapW, height: WEIGHT_H }}
-        />
-      );
-    })}
+      <View style={{ height: CHART_H, width: svgW }}>
+        <CartesianChart
+          data={data}
+          xKey="i"
+          yKeys={['weight']}
+          chartPressState={state}
+          domain={{ y: yDomain }}
+          domainPadding={{ left: 10, right: 14 }}
+          xAxis={{
+            font: axisFont,
+            tickCount,
+            lineColor: C.axisLine,
+            labelColor: C.axis,
+            formatXLabel: (v: number) => labels[Math.round(v)] ?? '',
+          }}
+          yAxis={[
+            {
+              font: axisFont,
+              tickCount: 5,
+              lineColor: C.axisLine,
+              labelColor: C.axis,
+              formatYLabel: (v: number) => (v % 1 === 0 ? v.toFixed(0) : v.toFixed(1)),
+            },
+          ]}
+        >
+          {({ points: cp, chartBounds }) => (
+            <>
+              <Area
+                points={cp.weight}
+                y0={chartBounds.bottom}
+                curveType="natural"
+                connectMissingData={false}
+              >
+                <LinearGradient
+                  start={vec(0, chartBounds.top)}
+                  end={vec(0, chartBounds.bottom)}
+                  colors={['rgba(83,74,183,0.16)', 'rgba(83,74,183,0)']}
+                />
+              </Area>
+              <Line
+                points={cp.weight}
+                color={C.weight}
+                strokeWidth={2.5}
+                curveType="natural"
+                connectMissingData={false}
+              />
+              {/* Scrub indicator (Apple-style): vertical rule + emphasized dot
+                  on the touched data point. Anchored to the point's pixel
+                  coords so it stays aligned with the line; the value/date show
+                  in the readout above. Only while a point is active. */}
+              {(() => {
+                const ap = activeIdx !== null ? cp.weight[activeIdx] : undefined;
+                if (!ap || ap.y == null) return null;
+                return (
+                  <>
+                    <SkiaLine
+                      p1={vec(ap.x, chartBounds.top)}
+                      p2={vec(ap.x, chartBounds.bottom)}
+                      color={C.weight}
+                      strokeWidth={1}
+                      opacity={0.35}
+                    />
+                    <Circle cx={ap.x} cy={ap.y} r={7.5} color="#FFFFFF" />
+                    <Circle cx={ap.x} cy={ap.y} r={4.5} color={C.weight} />
+                  </>
+                );
+              })()}
+            </>
+          )}
+        </CartesianChart>
+      </View>
     </View>
   );
 }
@@ -424,7 +375,6 @@ export default function TrendsChart({ entries, today, onJumpToDate }: Props) {
   });
   const [gran, setGran] = useState<Gran>('D');
   const [rangeModal, setRangeModal] = useState(false);
-  const [selectedIdx, setSelectedIdx] = useState<number | null>(null);
 
   const { startDate, endDate } = useMemo(() => {
     if (preset === 'CUSTOM') return { startDate: custom.start, endDate: custom.end };
@@ -441,9 +391,6 @@ export default function TrendsChart({ entries, today, onJumpToDate }: Props) {
     if (gran === 'W' && !weeklyOK) setGran('D');
     if (gran === 'M' && !monthlyOK) setGran('D');
   }, [gran, weeklyOK, monthlyOK]);
-
-  // Clear any selected point when the window or granularity changes.
-  useEffect(() => { setSelectedIdx(null); }, [startDate, endDate, gran]);
 
   // Entries indexed by date, filtered to the active window.
   const rangeMap = useMemo(() => {
@@ -553,9 +500,7 @@ export default function TrendsChart({ entries, today, onJumpToDate }: Props) {
           </View>
         </View>
 
-        <View style={s.chartBleed}>
-          <WeightChart points={points} gran={gran} svgW={svgW} selectedIdx={selectedIdx} onSelect={setSelectedIdx} />
-        </View>
+        <WeightChart points={points} svgW={svgW} />
       </View>
 
       {/* ── Averages ── */}
@@ -663,7 +608,20 @@ const s = StyleSheet.create({
   granTxtOn: { color: C.text },
   granTxtOff: { color: '#D2CCC3' },
 
-  chartBleed: { marginHorizontal: -16, overflow: 'visible' },
+  // Weight value readout (above the native chart)
+  readout: {
+    height: READOUT_H,
+    flexDirection: 'row',
+    alignItems: 'baseline',
+    gap: 8,
+  },
+  readoutVal: { fontSize: 22, fontWeight: '800', color: C.weight, letterSpacing: -0.5 },
+  readoutUnit: { fontSize: 12, fontWeight: '700', color: C.weight },
+  readoutDate: { fontSize: 11.5, fontWeight: '600', color: C.textMuted },
+
+  // Empty chart state (same footprint as the chart to avoid layout shift)
+  chartEmpty: { height: CHART_H + READOUT_H, alignItems: 'center', justifyContent: 'center' },
+  chartEmptyText: { fontSize: 12.5, color: C.textMuted, fontWeight: '600' },
 
   // Averages
   summaryRow: { flexDirection: 'row', gap: 10 },

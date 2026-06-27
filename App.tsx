@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { View, Text, ActivityIndicator, StyleSheet } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
+import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import type { Session } from '@supabase/supabase-js';
 import { supabase } from './lib/supabase';
 import SignInScreen from './screens/SignInScreen';
@@ -49,14 +50,14 @@ export default function App() {
   }
 
   return (
-    <>
+    <GestureHandlerRootView style={{ flex: 1 }}>
       <StatusBar style="dark" />
       {session?.user ? (
         <TrackerScreen user={session.user} />
       ) : (
         <SignInScreen />
       )}
-    </>
+    </GestureHandlerRootView>
   );
 }
 
