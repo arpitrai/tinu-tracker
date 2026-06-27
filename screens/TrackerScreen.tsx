@@ -16,6 +16,7 @@ import {
   Animated,
   Easing,
   BackHandler,
+  Alert,
 } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { supabase } from '../lib/supabase';
@@ -255,6 +256,47 @@ export default function TrackerScreen({ user }: Props) {
     setSaving(false);
   };
 
+  const performReset = async () => {
+    setSaving(true);
+    const { error } = await supabase
+      .from('entries')
+      .delete()
+      .eq('user_id', user.id)
+      .eq('date', selectedDate);
+    if (!error) {
+      setAllEntries(prev => {
+        const next = new Map(prev);
+        next.delete(selectedDate);
+        return next;
+      });
+      setExercised(null);
+      setAteSweets(null);
+      setWeight('');
+      setIsEditing(false);
+    }
+    setSaving(false);
+  };
+
+  const handleReset = () => {
+    const title = 'Reset this day?';
+    const message =
+      'This permanently clears exercise, sugar, and weight for this day — the same as if you had never logged it.';
+
+    // React Native's Alert is a no-op on react-native-web, so fall back to
+    // window.confirm there; native still gets the styled destructive dialog.
+    if (Platform.OS === 'web') {
+      if (typeof window !== 'undefined' && window.confirm(`${title}\n\n${message}`)) {
+        performReset();
+      }
+      return;
+    }
+
+    Alert.alert(title, message, [
+      { text: 'Cancel', style: 'cancel' },
+      { text: 'Reset', style: 'destructive', onPress: performReset },
+    ]);
+  };
+
   const chartEntries = useMemo(() => Array.from(allEntries.values()), [allEntries]);
 
   // Last 30 days (not including today — today is shown in the day card)
@@ -418,8 +460,14 @@ export default function TrackerScreen({ user }: Props) {
                     <View style={[styles.wtBox, styles.wtBoxLocked]}>
                       <View style={styles.wtSpacer} />
                       <View style={styles.wtVal}>
-                        <Text style={styles.wtNum}>{weight || '—'}</Text>
-                        <Text style={styles.wtUnit}>kg</Text>
+                        {weight ? (
+                          <>
+                            <Text style={styles.wtNum}>{weight}</Text>
+                            <Text style={styles.wtUnit}>kg</Text>
+                          </>
+                        ) : (
+                          <Text style={styles.wtNotSpecified}>Not specified</Text>
+                        )}
                       </View>
                       <View style={styles.wtSpacer} />
                     </View>
@@ -492,9 +540,20 @@ export default function TrackerScreen({ user }: Props) {
                       )}
                     </TouchableOpacity>
                   )}
-                  {/* Empty spacer kept so the action block is a constant height in every
-                      state (read-only / editable / editing) — prevents layout shift. */}
-                  <View style={styles.saveHintWrap} />
+                  {/* Constant-height slot so the action block stays the same height in every
+                      state (read-only / editable / editing) — prevents layout shift. Holds the
+                      Reset link when a saved entry exists; otherwise an empty spacer. */}
+                  <View style={styles.saveHintWrap}>
+                    {hasSavedEntry && (
+                      <Pressable
+                        onPress={handleReset}
+                        disabled={saving}
+                        hitSlop={8}
+                      >
+                        <Text style={styles.resetBtnText}>Reset day</Text>
+                      </Pressable>
+                    )}
+                  </View>
                 </View>
               </View>
 
@@ -679,6 +738,7 @@ const styles = StyleSheet.create({
     padding: 0,
   },
   wtUnit: { fontSize: 13, color: P.textMuted, fontWeight: '700' },
+  wtNotSpecified: { fontSize: 15, color: P.textMuted, fontWeight: '600' },
 
   // Action area
   actionWrap: {},
@@ -710,7 +770,8 @@ const styles = StyleSheet.create({
   saveBtnWaitText: { color: '#C8C0B8' },
   disabled: { opacity: 0.4 },
   saveBtnText: { color: '#fff', fontSize: 15.5, fontWeight: '700', letterSpacing: 0.1 },
-  saveHintWrap: { height: 30 },
+  saveHintWrap: { height: 30, alignItems: 'center', justifyContent: 'center' },
+  resetBtnText: { color: P.textMuted, fontSize: 13.5, fontWeight: '600', letterSpacing: 0.1 },
 
   // Bottom nav (Top Accent Slide)
   bottomNav: {

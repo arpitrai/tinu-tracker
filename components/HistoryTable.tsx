@@ -41,12 +41,18 @@ const HistoryRow = React.memo(function HistoryRow({
       </Text>
       <View style={styles.historyExCol}>
         {entry.exercised !== null && (
-          <View style={[styles.indicatorDot, { backgroundColor: entry.exercised ? P.green : P.red }]} />
+          <View style={styles.cellInline}>
+            <View style={[styles.indicatorDot, { backgroundColor: entry.exercised ? P.green : P.red }]} />
+            <Text style={styles.cellLabel}>{entry.exercised ? 'Yes' : 'No'}</Text>
+          </View>
         )}
       </View>
       <View style={styles.historySugCol}>
         {entry.ate_sweets !== null && (
-          <View style={[styles.indicatorDot, { backgroundColor: entry.ate_sweets ? P.red : P.green }]} />
+          <View style={styles.cellInline}>
+            <View style={[styles.indicatorDot, { backgroundColor: entry.ate_sweets ? P.red : P.green }]} />
+            <Text style={styles.cellLabel}>{entry.ate_sweets ? 'Yes' : 'No'}</Text>
+          </View>
         )}
       </View>
       <Text style={[styles.historyWeightText, styles.historyWtCol]}>
@@ -110,7 +116,7 @@ const styles = StyleSheet.create({
   // History column layout (shared between header and rows)
   historyDateCol: { flex: 1 },
   historyExCol: { width: 64, alignItems: 'center' },
-  historySugCol: { width: 52, alignItems: 'center' },
+  historySugCol: { width: 64, alignItems: 'center' },
   historyWtCol: { width: 56, textAlign: 'right' },
 
   // History header row
@@ -145,6 +151,16 @@ const styles = StyleSheet.create({
     fontSize: 13,
     color: P.text,
     fontWeight: '400',
+  },
+  cellInline: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+  },
+  cellLabel: {
+    fontSize: 12,
+    color: P.text,
+    fontWeight: '500',
   },
   indicatorDot: {
     width: 9,

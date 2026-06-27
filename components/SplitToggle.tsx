@@ -71,7 +71,9 @@ const styles = StyleSheet.create({
   },
   optIdle: { backgroundColor: '#F2F1EE' },
   optFaded: { opacity: 0.4 },
-  optText: { fontSize: 17, fontWeight: '800' },
+  // Fixed lineHeight so the locked-state lock emoji (🔒) doesn't enlarge the
+  // line box and push everything below down. Keep ≥ emoji glyph height at 17px.
+  optText: { fontSize: 17, lineHeight: 22, fontWeight: '800' },
   optTextOn: { color: '#FFFFFF' },
   optTextIdle: { color: '#C8C0B8' },
 });
