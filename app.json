@@ -16,7 +16,6 @@
     },
     "android": {
       "package": "com.arpitrai.tinutracker",
-      "versionCode": 1,
       "adaptiveIcon": {
         "backgroundColor": "#F4476E",
         "foregroundImage": "./assets/android-icon-foreground.png",
