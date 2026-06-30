@@ -68,6 +68,14 @@ export default function ProfileModal({ visible, onClose, user, avatarUrl, onName
       if (delErr) throw delErr;
       // signOut clears the now-orphaned session; App.tsx then swaps to SignInScreen.
       await supabase.auth.signOut();
+      // Alert is global, so it shows over the sign-in screen after this unmounts.
+      // Past tense on purpose: the RPC has already finished deleting everything.
+      const doneMsg = 'Your account and all of your data have been permanently deleted.';
+      if (Platform.OS === 'web') {
+        window.alert(`Account deleted\n\n${doneMsg}`);
+      } else {
+        Alert.alert('Account deleted', doneMsg);
+      }
       // No further state updates: this screen unmounts once the session clears.
     } catch (e: any) {
       setError(e.message ?? 'Could not delete your account. Please try again.');
@@ -76,15 +84,21 @@ export default function ProfileModal({ visible, onClose, user, avatarUrl, onName
   };
 
   const confirmDeleteAccount = () => {
-    Alert.alert(
-      'Delete account?',
+    const message =
       'This permanently deletes your account and all of your logged data. ' +
-        'This cannot be undone and your data is not recoverable.',
-      [
-        { text: 'Cancel', style: 'cancel' },
-        { text: 'Delete', style: 'destructive', onPress: handleDeleteAccount },
-      ],
-    );
+      'This cannot be undone and your data is not recoverable.';
+    // RN's Alert is a no-op on react-native-web, so the native confirm dialog
+    // never appears in the browser build. Fall back to window.confirm on web.
+    if (Platform.OS === 'web') {
+      if (window.confirm(`Delete account?\n\n${message}`)) {
+        handleDeleteAccount();
+      }
+      return;
+    }
+    Alert.alert('Delete account?', message, [
+      { text: 'Cancel', style: 'cancel' },
+      { text: 'Delete', style: 'destructive', onPress: handleDeleteAccount },
+    ]);
   };
 
   const busy = saving || deleting;
@@ -159,28 +173,22 @@ export default function ProfileModal({ visible, onClose, user, avatarUrl, onName
               )}
             </TouchableOpacity>
 
-            {/* Danger zone — irreversible account deletion.
-                Temporarily disabled until the delete flow is verified end-to-end.
-                The handlers (confirmDeleteAccount / handleDeleteAccount) and the
-                delete_user_account RPC are still in place — re-enable by uncommenting.
-            <View style={styles.dangerZone}>
-              <TouchableOpacity
-                style={[styles.deleteBtn, busy && styles.btnDisabled]}
-                onPress={confirmDeleteAccount}
-                disabled={busy}
-                activeOpacity={0.85}
-              >
-                {deleting ? (
-                  <ActivityIndicator color={M3.error} />
-                ) : (
-                  <Text style={styles.deleteBtnText}>Delete account</Text>
-                )}
-              </TouchableOpacity>
-              <Text style={styles.deleteHint}>
-                Permanently deletes your account and all logged data. This cannot be undone.
-              </Text>
-            </View>
-            */}
+            {/* Danger zone — small tertiary link; the confirm dialog carries the warning. */}
+            <TouchableOpacity
+              style={styles.deleteLink}
+              onPress={confirmDeleteAccount}
+              disabled={busy}
+              activeOpacity={0.6}
+              hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+            >
+              {deleting ? (
+                <ActivityIndicator size="small" color={M3.error} />
+              ) : (
+                <Text style={[styles.deleteLinkText, busy && styles.btnDisabled]}>
+                  Delete account
+                </Text>
+              )}
+            </TouchableOpacity>
           </ScrollView>
         </KeyboardAvoidingView>
       </SafeAreaView>
@@ -284,23 +292,8 @@ const styles = StyleSheet.create({
 
   errorText: { fontSize: 13, color: M3.error, textAlign: 'center' },
 
-  dangerZone: {
-    marginTop: 16,
-    paddingTop: 20,
-    borderTopWidth: 1,
-    borderTopColor: M3.outlineVariant,
-    gap: 8,
-  },
-  deleteBtn: {
-    borderRadius: 100,
-    borderWidth: 1,
-    borderColor: M3.error,
-    paddingVertical: 14,
-    alignItems: 'center',
-    backgroundColor: M3.surface,
-  },
-  deleteBtnText: { color: M3.error, fontSize: 14, fontWeight: '500', letterSpacing: 0.1 },
-  deleteHint: { fontSize: 12, color: M3.onSurfaceVariant, textAlign: 'center', lineHeight: 18 },
+  deleteLink: { alignSelf: 'center', marginTop: 12, paddingVertical: 8, minHeight: 36, justifyContent: 'center' },
+  deleteLinkText: { fontSize: 13, color: M3.error, fontWeight: '500' },
 
   otpHeading: {
     fontSize: 28,
