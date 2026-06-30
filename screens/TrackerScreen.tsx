@@ -79,6 +79,24 @@ function offsetDateStr(dateStr: string, days: number): string {
   return `${yy}-${mm}-${dd}`;
 }
 
+// Seed the weight stepper with the nearest known reading so the user barely
+// adjusts: prefer the most recent reading on or before the day; otherwise the
+// closest reading after it; otherwise 70.0 for a brand-new user.
+function pickSeedWeight(entries: Iterable<DayEntry>, forDate: string): string {
+  let before: DayEntry | null = null; // latest reading with date <= forDate
+  let after: DayEntry | null = null;  // earliest reading with date > forDate
+  for (const e of entries) {
+    if (e.weight == null || e.weight === '') continue;
+    if (e.date <= forDate) {
+      if (!before || e.date > before.date) before = e;
+    } else if (!after || e.date < after.date) {
+      after = e;
+    }
+  }
+  const pick = before ?? after;
+  return pick ? String(pick.weight) : '70.0';
+}
+
 function getFirstName(user: User): string {
   const full: string = user.user_metadata?.full_name ?? user.email?.split('@')[0] ?? 'there';
   return full.split(' ')[0];
@@ -215,12 +233,9 @@ export default function TrackerScreen({ user }: Props) {
     return () => sub.remove();
   }, [isEditing, handleCancelEdit]);
 
-  // Seed the weight stepper with the most recent recorded weight (or a default).
+  // Seed the weight stepper with the nearest recorded weight (or 70.0 default).
   function handleAddWeight() {
-    const prior = Array.from(allEntries.values())
-      .filter(e => e.weight != null && e.weight !== '' && e.date <= selectedDate)
-      .sort((a, b) => b.date.localeCompare(a.date));
-    setWeight(prior.length ? String(prior[0].weight) : '70.0');
+    setWeight(pickSeedWeight(allEntries.values(), selectedDate));
   }
 
   const nothingEntered = exercised === null && ateSweets === null && !weight;
@@ -315,9 +330,9 @@ export default function TrackerScreen({ user }: Props) {
     if (isEditing) return { text: 'Editing…', tone: 'edit' };
     const rel = isToday ? 'Today' : selectedDate === yesterday ? 'Yesterday' : null;
     if (hasSavedEntry) {
-      return { text: rel ? `${rel} · saved ✓` : 'Saved ✓', tone: 'saved' };
+      return { text: rel ? `${rel} · Saved ✓` : 'Saved ✓', tone: 'saved' };
     }
-    return { text: rel ? `${rel} · not logged` : 'Not logged', tone: 'muted' };
+    return { text: rel ? `${rel} · Not logged` : 'Not logged', tone: 'muted' };
   }
 
   // Slide the accent bar to the centre of the active tab (two equal-width tabs).
@@ -454,7 +469,13 @@ export default function TrackerScreen({ user }: Props) {
                 <View style={styles.metric}>
                   <View style={styles.mtitleRow}>
                     <Text style={styles.mTitle}>Weight</Text>
-                    <Text style={styles.mHelper}>kg</Text>
+                    {!readOnly && weight !== '' ? (
+                      <TouchableOpacity onPress={() => setWeight('')} hitSlop={8}>
+                        <Text style={styles.wtRemove}>Remove</Text>
+                      </TouchableOpacity>
+                    ) : (
+                      <Text style={styles.mHelper}>kg</Text>
+                    )}
                   </View>
                   {readOnly ? (
                     <View style={[styles.wtBox, styles.wtBoxLocked]}>
@@ -557,8 +578,10 @@ export default function TrackerScreen({ user }: Props) {
                 </View>
               </View>
 
-              {/* ── Recent history ── */}
-              <HistoryTable entries={recentEntries} onRowPress={navigateToDate} />
+              {/* ── Recent history (hidden until the user has logged at least one day ever) ── */}
+              {allEntries.size > 0 && (
+                <HistoryTable entries={recentEntries} onRowPress={navigateToDate} />
+              )}
             </>
           ) : (
             <TrendsChart
@@ -688,6 +711,7 @@ const styles = StyleSheet.create({
   },
   mTitle: { fontSize: 17, fontWeight: '800', color: P.text, letterSpacing: -0.3 },
   mHelper: { fontSize: 11.5, fontWeight: '600', color: P.textMuted },
+  wtRemove: { fontSize: 12.5, fontWeight: '700', color: P.primary },
 
   // Weight
   wtEmpty: {
