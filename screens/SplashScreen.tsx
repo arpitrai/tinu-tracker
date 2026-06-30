@@ -110,13 +110,11 @@ export default function SplashScreen({ onDone }: { onDone: () => void }) {
           <Text style={styles.brandName}>Tinu Tracker</Text>
         </View>
 
-        <View style={styles.pulseWrap}>
-          <AnimatedPulse size={128} reduceMotion={reduceMotion} />
-        </View>
-
         <View style={styles.spacer} />
 
-        <Animated.View style={contentStyle}>
+        {/* Glyph + headline + body + pills as one vertically-centered cluster. */}
+        <Animated.View style={[styles.cluster, contentStyle]}>
+          <AnimatedPulse size={108} reduceMotion={reduceMotion} />
           <Text style={styles.title}>Watch yourself get healthier.</Text>
           <Text style={styles.body}>Log exercise, sugar & weight. Tiny effort, real trends.</Text>
 
@@ -127,17 +125,19 @@ export default function SplashScreen({ onDone }: { onDone: () => void }) {
               </View>
             ))}
           </View>
-
-          <TouchableOpacity
-            testID="splash-get-started"
-            style={styles.cta}
-            activeOpacity={0.85}
-            onPress={onDone}
-            accessibilityRole="button"
-          >
-            <Text style={styles.ctaText}>Get started</Text>
-          </TouchableOpacity>
         </Animated.View>
+
+        <View style={styles.spacer} />
+
+        <TouchableOpacity
+          testID="splash-get-started"
+          style={styles.cta}
+          activeOpacity={0.85}
+          onPress={onDone}
+          accessibilityRole="button"
+        >
+          <Text style={styles.ctaText}>Get started</Text>
+        </TouchableOpacity>
       </View>
     </LinearGradient>
   );
@@ -151,7 +151,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 28,
     paddingBottom: 36,
   },
-  brandRow: { flexDirection: 'row', alignItems: 'center', gap: 9 },
+  brandRow: { flexDirection: 'row', alignItems: 'center', gap: 9, alignSelf: 'flex-start' },
   brandTile: {
     width: 32,
     height: 32,
@@ -161,23 +161,26 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   brandName: { color: '#FFFFFF', fontSize: 15, fontWeight: '800', letterSpacing: -0.3 },
-  pulseWrap: { alignItems: 'center', marginTop: 18 },
   spacer: { flex: 1 },
+  cluster: { alignItems: 'center' },
   title: {
     color: '#FFFFFF',
-    fontSize: 33,
-    lineHeight: 36,
+    fontSize: 31,
+    lineHeight: 35,
     fontWeight: '800',
     letterSpacing: -1,
+    textAlign: 'center',
+    marginTop: 26,
   },
   body: {
     color: 'rgba(255,255,255,0.88)',
     fontSize: 14,
     lineHeight: 21,
     marginTop: 12,
-    maxWidth: 300,
+    maxWidth: 280,
+    textAlign: 'center',
   },
-  chips: { flexDirection: 'row', gap: 7, marginTop: 22, marginBottom: 16 },
+  chips: { flexDirection: 'row', gap: 7, marginTop: 24, justifyContent: 'center' },
   chip: {
     backgroundColor: 'rgba(255,255,255,0.16)',
     paddingHorizontal: 12,
