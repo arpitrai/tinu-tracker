@@ -445,6 +445,13 @@ export default function TrendsChart({ entries, today, onJumpToDate }: Props) {
     ? `Custom · ${fmtPretty(startDate)} – ${fmtPretty(endDate)} · ${totalDays} days`
     : `Last ${PRESET_DAYS[preset]} days · ${fmtPretty(startDate)} – ${fmtPretty(endDate)}`;
 
+  // No logged days at all in the selected window: keep the card shell visible but
+  // swap the data for a message so the user knows what to do.
+  const isEmpty = rangeMap.size === 0;
+  const emptyTitle = preset === 'CUSTOM'
+    ? 'No entries in the selected period'
+    : `No entries in the last ${PRESET_DAYS[preset]} days`;
+
   const handlePreset = (p: Preset) => {
     if (p === 'CUSTOM') { setRangeModal(true); return; }
     setPreset(p);
@@ -473,6 +480,16 @@ export default function TrendsChart({ entries, today, onJumpToDate }: Props) {
         </View>
         <Text style={s.subtitle}>{subtitle}</Text>
       </View>
+
+      {/* ── Empty-state message (selected window has no logged days) ── */}
+      {isEmpty && (
+        <View style={[s.card, s.emptyBanner]}>
+          <Text style={s.emptyTitle}>{emptyTitle}</Text>
+          <Text style={s.emptyBody}>
+            Log your exercise, sugar, or weight on any day in this period and your trends will show up here.
+          </Text>
+        </View>
+      )}
 
       {/* ── Weight chart ── */}
       <View style={s.card}>
@@ -527,8 +544,8 @@ export default function TrendsChart({ entries, today, onJumpToDate }: Props) {
         </View>
       </View>
 
-      {/* ── History table ── */}
-      <HistoryTable entries={tableEntries} onRowPress={onJumpToDate} />
+      {/* ── History table (hidden when the window is empty — all rows would be blank) ── */}
+      {!isEmpty && <HistoryTable entries={tableEntries} onRowPress={onJumpToDate} />}
 
       <DateRangeModal
         visible={rangeModal}
@@ -584,6 +601,11 @@ const s = StyleSheet.create({
   pillTxt: { fontSize: 12.5, fontWeight: '700', color: '#9A9082' },
   pillTxtOn: { color: C.pillActiveText },
   subtitle: { fontSize: 11.5, color: '#9A9082', fontWeight: '600', marginTop: 9, textAlign: 'center' },
+
+  // Empty-state banner
+  emptyBanner: { alignItems: 'center', gap: 6, paddingVertical: 22 },
+  emptyTitle: { fontSize: 15, fontWeight: '800', color: C.text, textAlign: 'center', letterSpacing: -0.2 },
+  emptyBody: { fontSize: 12.5, fontWeight: '600', color: C.textMuted, textAlign: 'center', lineHeight: 18 },
 
   // Chart card header
   chartHeader: {
