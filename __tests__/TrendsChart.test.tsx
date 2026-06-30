@@ -50,4 +50,18 @@ describe('TrendsChart', () => {
     expect(screen.getByText('Weekly')).toBeTruthy();
     expect(screen.getByText('Monthly')).toBeTruthy();
   });
+
+  it('shows an empty-state message but keeps the card shell when nothing is in the window', async () => {
+    // Only an out-of-window entry -> nothing logged in the last 30 days.
+    const outOfWindow: ChartEntry[] = [
+      { date: '2026-01-01', exercised: true, ate_sweets: true, weight: '99.0' },
+    ];
+    await render(<TrendsChart entries={outOfWindow} today={TODAY} onJumpToDate={() => {}} />);
+    // Message shown
+    expect(screen.getByText('No entries in the last 30 days')).toBeTruthy();
+    // Shell still present: period pills + average cards
+    expect(screen.getByText('30D')).toBeTruthy();
+    expect(screen.getByText('Avg weight')).toBeTruthy();
+    expect(screen.getByText('0 readings')).toBeTruthy();
+  });
 });
