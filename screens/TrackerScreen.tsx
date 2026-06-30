@@ -280,7 +280,7 @@ export default function TrackerScreen({ user }: Props) {
   const handleReset = () => {
     const title = 'Reset this day?';
     const message =
-      'This permanently clears exercise, sugar, and weight for this day — the same as if you had never logged it.';
+      'This permanently clears exercise, sugar, and weight for this day - the same as if you had never logged it.';
 
     // React Native's Alert is a no-op on react-native-web, so fall back to
     // window.confirm there; native still gets the styled destructive dialog.

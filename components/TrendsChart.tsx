@@ -508,7 +508,7 @@ export default function TrendsChart({ entries, today, onJumpToDate }: Props) {
         <View style={s.summaryCard}>
           <Text style={s.cardLabel}>Avg weight</Text>
           <Text style={[s.cardValue, { color: C.weight }]}>
-            {stats.avgW != null ? stats.avgW.toFixed(1) : '—'}
+            {stats.avgW != null ? stats.avgW.toFixed(1) : '-'}
             {stats.avgW != null && <Text style={s.cardUnit}> kg</Text>}
           </Text>
           <Text style={s.cardSub}>

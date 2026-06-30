@@ -163,6 +163,10 @@ export default function SignInScreen() {
   return (
     <LinearGradient colors={['#FFF5EC', '#FFFDFB']} start={{ x: 0, y: 0 }} end={{ x: 0, y: 0.55 }} style={styles.root}>
       <SafeAreaView style={styles.safe}>
+        <KeyboardAvoidingView
+          style={styles.flex}
+          behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+        >
         {/* ── Hero ── */}
         <View style={styles.hero}>
           {/* Brand row */}
@@ -195,16 +199,13 @@ export default function SignInScreen() {
             </View>
 
             <Text style={styles.subtitle}>
-              Log exercise, sugar and weight in seconds — and watch your progress add up.
+              Log exercise, sugar and weight in seconds - and watch your progress add up.
             </Text>
           </View>
         </View>
 
         {/* ── CTA ── */}
-        <KeyboardAvoidingView
-          behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-          style={styles.cta}
-        >
+        <View style={styles.cta}>
           {error ? <Text style={styles.error}>{error}</Text> : null}
 
           {emailMode ? (
@@ -289,6 +290,7 @@ export default function SignInScreen() {
               Privacy Policy
             </Text>
           </Text>
+        </View>
         </KeyboardAvoidingView>
       </SafeAreaView>
     </LinearGradient>
@@ -297,6 +299,7 @@ export default function SignInScreen() {
 
 const styles = StyleSheet.create({
   root: { flex: 1 },
+  flex: { flex: 1 },
   // SafeAreaView only insets on iOS; pad past the status bar manually on Android.
   safe: { flex: 1, paddingTop: Platform.OS === 'android' ? StatusBar.currentHeight : 0 },
 
