@@ -8,10 +8,15 @@ import { supabase } from './lib/supabase';
 import SignInScreen from './screens/SignInScreen';
 import TrackerScreen from './screens/TrackerScreen';
 import SplashScreen from './screens/SplashScreen';
+import { configureNotificationHandler, registerPushToken } from './lib/notifications';
 
 // Per-install flag: set once the first-run splash has been seen, so it shows
 // exactly once per install and never again. Cleared by uninstall / clear-data.
 const ONBOARDED_KEY = '@tinu/onboarded';
+
+// Foreground display behaviour must be set before the app renders. Module-level
+// so it runs exactly once, regardless of re-renders.
+configureNotificationHandler();
 
 export default function App() {
   const [session, setSession] = useState<Session | null>(null);
@@ -48,6 +53,14 @@ export default function App() {
       subscription.unsubscribe();
     };
   }, []);
+
+  // Register this device for remote push once a user is signed in. Fire-and-forget:
+  // it no-ops on simulators / when permission is denied, and never blocks the UI.
+  useEffect(() => {
+    if (session?.user) {
+      registerPushToken().catch(() => {});
+    }
+  }, [session?.user?.id]);
 
   const dismissSplash = () => {
     setOnboarded(true);
