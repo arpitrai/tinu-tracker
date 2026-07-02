@@ -258,7 +258,7 @@ export default function ProfileModal({ visible, onClose, user, avatarUrl, onName
                   <Text style={styles.remindHint}>You'll get a nudge to log your day at each time.</Text>
                 </>
               ) : (
-                <Text style={styles.remindHint}>Off - turn on to get a daily nudge to log your day.</Text>
+                <Text style={styles.remindHint}>Get a daily nudge to log your day.</Text>
               )}
             </View>
 
@@ -366,7 +366,7 @@ const styles = StyleSheet.create({
 
   nameInput: {
     marginTop: 12, fontSize: 22, fontWeight: '800', color: M3.onSurface,
-    letterSpacing: -0.3, paddingVertical: 2, paddingHorizontal: 20,
+    letterSpacing: -0.3, paddingVertical: 2, paddingHorizontal: 20, textAlign: 'center',
   },
   email: { textAlign: 'center', fontSize: 13, color: M3.onSurfaceVariant, marginTop: 2 },
 
