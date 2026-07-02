@@ -17,10 +17,9 @@ import {
 } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import DateTimePicker, { DateTimePickerEvent } from '@react-native-community/datetimepicker';
-import AsyncStorage from '@react-native-async-storage/async-storage';
 import { supabase } from '../lib/supabase';
 import type { User } from '@supabase/supabase-js';
-import { scheduleDailyReminders } from '../lib/notifications';
+import { loadReminderTimes, saveReminderTimes, syncDailyReminders } from '../lib/notifications';
 
 interface Props {
   visible: boolean;
@@ -29,11 +28,6 @@ interface Props {
   avatarUrl?: string | null;
   onNameSaved?: (name: string) => void;
 }
-
-// New multi-time storage; legacy single-time keys are migrated on first load.
-const REMINDER_TIMES_KEY = '@tinu/reminderTimes';
-const LEGACY_ON_KEY = '@tinu/reminderEnabled';
-const LEGACY_TIME_KEY = '@tinu/reminderTime';
 
 // Quick-pick times shown as chips. Any of them can be on at once, and the user
 // can add their own via the picker. Values are "HH:MM" (24h).
@@ -68,31 +62,20 @@ export default function ProfileModal({ visible, onClose, user, avatarUrl, onName
     setName(user.user_metadata?.full_name ?? '');
     setError(null);
     setImgError(false);
-    // Load saved reminder times, migrating from the old single-time keys once.
-    (async () => {
-      const raw = await AsyncStorage.getItem(REMINDER_TIMES_KEY);
-      if (raw != null) {
-        try { setTimes(JSON.parse(raw)); } catch { setTimes([]); }
-        return;
-      }
-      const legacyOn = await AsyncStorage.getItem(LEGACY_ON_KEY);
-      const legacyTime = await AsyncStorage.getItem(LEGACY_TIME_KEY);
-      const migrated = legacyOn === '1' && legacyTime ? [legacyTime] : [];
-      setTimes(migrated);
-      await AsyncStorage.setItem(REMINDER_TIMES_KEY, JSON.stringify(migrated));
-    })();
+    // Load saved reminder times (defaults to 10pm ON on a fresh install; also
+    // migrates the old single-time keys once — both handled in notifications.ts).
+    loadReminderTimes().then(setTimes);
   }, [visible, user]);
 
   // Single source of truth: persist `next` and (re)schedule the OS notifications.
   // Reverts if the user denied the notification permission.
   const commitTimes = async (next: string[]) => {
-    const sorted = Array.from(new Set(next)).sort();
+    const sorted = await saveReminderTimes(next);
     setTimes(sorted);
-    await AsyncStorage.setItem(REMINDER_TIMES_KEY, JSON.stringify(sorted));
-    const ok = await scheduleDailyReminders(sorted);
+    const ok = await syncDailyReminders();
     if (!ok && sorted.length > 0) {
-      setTimes([]);
-      await AsyncStorage.setItem(REMINDER_TIMES_KEY, JSON.stringify([]));
+      setTimes(await saveReminderTimes([]));
+      await syncDailyReminders();
       const msg = 'Enable notifications for Tinu Tracker in your device Settings to get reminders.';
       if (Platform.OS === 'web') window.alert(msg);
       else Alert.alert('Notifications are off', msg);

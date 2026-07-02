@@ -17,9 +17,11 @@ import {
   Easing,
   BackHandler,
   Alert,
+  AppState,
 } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { supabase } from '../lib/supabase';
+import { setLoggedDates, syncDailyReminders } from '../lib/notifications';
 import type { User } from '@supabase/supabase-js';
 import TrendsChart from '../components/TrendsChart';
 import ProfileMenu from '../components/ProfileMenu';
@@ -193,6 +195,27 @@ export default function TrackerScreen({ user }: Props) {
   }, [user.id, today]);
 
   useEffect(() => { loadData(); }, [loadData]);
+
+  // Keep the daily reminders in step with what's logged: publish the set of
+  // logged days (today forward — past days are never scheduled) and re-lay the
+  // reminders. Runs on initial load and after every save/reset, so a day's
+  // reminder is dropped the instant that day is logged. Fire-and-forget: no-ops
+  // when notifications are off or permission is denied.
+  useEffect(() => {
+    const loggedForward = Array.from(allEntries.keys()).filter((k) => k >= today);
+    setLoggedDates(loggedForward)
+      .then(() => syncDailyReminders())
+      .catch(() => {});
+  }, [allEntries, today]);
+
+  // Re-sync when the app returns to the foreground: the day may have rolled over,
+  // or the user may have logged on another device since we last scheduled.
+  useEffect(() => {
+    const sub = AppState.addEventListener('change', (state) => {
+      if (state === 'active') syncDailyReminders().catch(() => {});
+    });
+    return () => sub.remove();
+  }, []);
 
   const navigateToDate = useCallback((newDate: string) => {
     setSelectedDate(newDate);
