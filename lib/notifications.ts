@@ -185,7 +185,7 @@ export async function syncDailyReminders(): Promise<boolean> {
       await Notifications.scheduleNotificationAsync({
         identifier: `${REMINDER_PREFIX}${dateStr}-${t}`,
         content: {
-          title: "You haven't logged today",
+          title: "Stay on track today",
           body: "You haven't tracked your exercise, sugar or weight yet today. Tap to log it.",
           ...(Platform.OS === 'android' ? { channelId: CHANNEL_ID } : {}),
         },
