@@ -22,6 +22,8 @@ import {
 import { LinearGradient } from 'expo-linear-gradient';
 import { supabase } from '../lib/supabase';
 import { setLoggedDates, syncDailyReminders } from '../lib/notifications';
+import { validateWeight } from '../lib/weight';
+import { friendlyWriteError } from '../lib/errors';
 import type { User } from '@supabase/supabase-js';
 import TrendsChart from '../components/TrendsChart';
 import ProfileMenu from '../components/ProfileMenu';
@@ -29,6 +31,7 @@ import ProfileModal from '../components/ProfileModal';
 import SplitToggle from '../components/SplitToggle';
 import CalendarModal from '../components/CalendarModal';
 import HistoryTable from '../components/HistoryTable';
+import Toast, { type ToastKind, type ToastState } from '../components/Toast';
 import Svg, { Path } from 'react-native-svg';
 
 function NavListIcon({ color }: { color: string }) {
@@ -67,8 +70,14 @@ type Tab = 'entries' | 'trend';
 
 const NAV_ACCENT_W = 42; // width of the sliding gradient accent bar
 
+// Local time, never UTC: toISOString() would roll the day over at the wrong
+// moment for any non-UTC timezone (in IST it reports yesterday until 05:30).
 function todayKey(): string {
-  return new Date().toISOString().split('T')[0];
+  const d = new Date();
+  const yy = d.getFullYear();
+  const mm = String(d.getMonth() + 1).padStart(2, '0');
+  const dd = String(d.getDate()).padStart(2, '0');
+  return `${yy}-${mm}-${dd}`;
 }
 
 function offsetDateStr(dateStr: string, days: number): string {
@@ -149,9 +158,28 @@ export default function TrackerScreen({ user }: Props) {
   const [exercised, setExercised] = useState<boolean | null>(null);
   const [ateSweets, setAteSweets] = useState<boolean | null>(null);
   const [weight, setWeight] = useState('');
+  // The weight editor stays open once opened, even if the user clears every
+  // digit — collapsing back to "+ Add weight" mid-typing would yank the field
+  // out from under them. "Remove" is the explicit way back to the empty state.
+  const [weightActive, setWeightActive] = useState(false);
+  const [weightError, setWeightError] = useState(false);
+  const weightInputRef = useRef<TextInput>(null);
   const [saving, setSaving] = useState(false);
   const [justSaved, setJustSaved] = useState(false);
   const [isEditing, setIsEditing] = useState(false);
+
+  // Tracked so the pending "✓ Saved" reset can be cancelled on unmount.
+  const justSavedTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => () => {
+    if (justSavedTimer.current) clearTimeout(justSavedTimer.current);
+  }, []);
+
+  const [toast, setToast] = useState<ToastState | null>(null);
+  const toastSeq = useRef(0);
+  const showToast = useCallback((kind: ToastKind, message: string) => {
+    toastSeq.current += 1;
+    setToast({ id: toastSeq.current, kind, message });
+  }, []);
 
   const [menuVisible, setMenuVisible] = useState(false);
   const [profileVisible, setProfileVisible] = useState(false);
@@ -231,6 +259,8 @@ export default function TrackerScreen({ user }: Props) {
     }
     setJustSaved(false);
     setIsEditing(false);
+    setWeightActive(false);
+    setWeightError(false);
   }, [allEntries]);
 
   const goLeft = () => navigateToDate(offsetDateStr(selectedDate, -1));
@@ -244,6 +274,8 @@ export default function TrackerScreen({ user }: Props) {
       setWeight(entry.weight != null ? String(entry.weight) : '');
     }
     setIsEditing(false);
+    setWeightActive(false);
+    setWeightError(false);
   }, [allEntries, selectedDate]);
 
   // Hardware back while editing reverts to the saved view (replaces the old Cancel button).
@@ -256,42 +288,91 @@ export default function TrackerScreen({ user }: Props) {
     return () => sub.remove();
   }, [isEditing, handleCancelEdit]);
 
-  // Seed the weight stepper with the nearest recorded weight (or 70.0 default).
+  // Open the weight editor seeded with the nearest recorded weight (or 70.0),
+  // then focus and select it so typing a different number replaces the seed
+  // outright — the stepper is a convenience, not the only way in.
   function handleAddWeight() {
     setWeight(pickSeedWeight(allEntries.values(), selectedDate));
+    setWeightActive(true);
+    setWeightError(false);
+    // Focus on the next frame: the input only mounts once the editor is shown.
+    requestAnimationFrame(() => weightInputRef.current?.focus());
   }
+
+  function handleRemoveWeight() {
+    setWeight('');
+    setWeightActive(false);
+    setWeightError(false);
+  }
+
+  // Shown whenever there is a value, or the user has deliberately opened it.
+  const showWeightEditor = weight !== '' || weightActive;
 
   const nothingEntered = exercised === null && ateSweets === null && !weight;
 
-  const incrementWeight = () => {
+  const stepWeight = (delta: number) => {
+    setWeightError(false);
+    if (weight.trim() === '') {
+      // Stepping from an empty field starts at the seed rather than 0.1.
+      setWeight(pickSeedWeight(allEntries.values(), selectedDate));
+      return;
+    }
     const current = parseFloat(weight) || 0;
-    setWeight((Math.round((current + 0.1) * 10) / 10).toFixed(1));
+    const next = Math.round((current + delta) * 10) / 10;
+    if (next < 0) return;
+    setWeight(next.toFixed(1));
   };
 
-  const decrementWeight = () => {
-    const current = parseFloat(weight) || 0;
-    if (current > 0) setWeight((Math.round((current - 0.1) * 10) / 10).toFixed(1));
-  };
+  const incrementWeight = () => stepWeight(0.1);
+  const decrementWeight = () => stepWeight(-0.1);
 
   const handleSave = async () => {
+    // Any single metric is enough to save a day, but a completely empty day is
+    // not a day — that is what "Reset day" is for. The Save button is disabled
+    // in this state; this guard keeps the rule true however it is reached.
+    if (nothingEntered) {
+      showToast('error', 'Log exercise, sugar or weight before saving.');
+      return;
+    }
+
+    const wt = validateWeight(weight);
+    if (!wt.ok) {
+      setWeightError(true);
+      showToast('error', wt.message ?? 'Check the weight you entered');
+      return;
+    }
+    setWeightError(false);
+
     setSaving(true);
     const { error } = await supabase
       .from('entries')
       .upsert(
-        { user_id: user.id, date: selectedDate, exercised, ate_sweets: ateSweets, weight: weight || null },
+        { user_id: user.id, date: selectedDate, exercised, ate_sweets: ateSweets, weight: wt.value },
         { onConflict: 'user_id,date' },
       );
-    if (!error) {
-      setAllEntries(prev => {
-        const next = new Map(prev);
-        next.set(selectedDate, { date: selectedDate, exercised, ate_sweets: ateSweets, weight: weight || null });
-        return next;
-      });
-      setJustSaved(true);
-      setIsEditing(false);
-      setTimeout(() => setJustSaved(false), 2000);
-    }
     setSaving(false);
+
+    if (error) {
+      // Flag the field when the failure is clearly about the weight value.
+      if (error.code === '22P02' || error.code === '22003' || /weight/i.test(error.message ?? '')) {
+        setWeightError(true);
+      }
+      showToast('error', friendlyWriteError(error, 'save'));
+      return;
+    }
+
+    setWeight(wt.value ?? '');
+    setWeightActive(false);
+    setAllEntries(prev => {
+      const next = new Map(prev);
+      next.set(selectedDate, { date: selectedDate, exercised, ate_sweets: ateSweets, weight: wt.value });
+      return next;
+    });
+    setJustSaved(true);
+    setIsEditing(false);
+    showToast('success', 'Saved');
+    if (justSavedTimer.current) clearTimeout(justSavedTimer.current);
+    justSavedTimer.current = setTimeout(() => setJustSaved(false), 2000);
   };
 
   const performReset = async () => {
@@ -301,18 +382,25 @@ export default function TrackerScreen({ user }: Props) {
       .delete()
       .eq('user_id', user.id)
       .eq('date', selectedDate);
-    if (!error) {
-      setAllEntries(prev => {
-        const next = new Map(prev);
-        next.delete(selectedDate);
-        return next;
-      });
-      setExercised(null);
-      setAteSweets(null);
-      setWeight('');
-      setIsEditing(false);
-    }
     setSaving(false);
+
+    if (error) {
+      showToast('error', friendlyWriteError(error, 'reset'));
+      return;
+    }
+
+    setAllEntries(prev => {
+      const next = new Map(prev);
+      next.delete(selectedDate);
+      return next;
+    });
+    setExercised(null);
+    setAteSweets(null);
+    setWeight('');
+    setWeightActive(false);
+    setWeightError(false);
+    setIsEditing(false);
+    showToast('success', 'Day reset');
   };
 
   const handleReset = () => {
@@ -337,10 +425,11 @@ export default function TrackerScreen({ user }: Props) {
 
   const chartEntries = useMemo(() => Array.from(allEntries.values()), [allEntries]);
 
-  // Last 30 days (not including today — today is shown in the day card)
+  // Last 30 days, today first. Today is also shown in the day card above, but
+  // it has to appear here too — otherwise saving today changes nothing visible.
   const recentEntries = useMemo<DayEntry[]>(() => {
     const result: DayEntry[] = [];
-    for (let i = 1; i <= 30; i++) {
+    for (let i = 0; i < 30; i++) {
       const d = offsetDateStr(today, -i);
       result.push(allEntries.get(d) ?? { date: d, exercised: null, ate_sweets: null, weight: null });
     }
@@ -492,8 +581,8 @@ export default function TrackerScreen({ user }: Props) {
                 <View style={styles.metric}>
                   <View style={styles.mtitleRow}>
                     <Text style={styles.mTitle}>Weight</Text>
-                    {!readOnly && weight !== '' ? (
-                      <TouchableOpacity onPress={() => setWeight('')} hitSlop={8}>
+                    {!readOnly && showWeightEditor ? (
+                      <TouchableOpacity onPress={handleRemoveWeight} hitSlop={8}>
                         <Text style={styles.wtRemove}>Remove</Text>
                       </TouchableOpacity>
                     ) : (
@@ -515,25 +604,31 @@ export default function TrackerScreen({ user }: Props) {
                       </View>
                       <View style={styles.wtSpacer} />
                     </View>
-                  ) : weight === '' ? (
+                  ) : !showWeightEditor ? (
                     <TouchableOpacity style={styles.wtEmpty} onPress={handleAddWeight} activeOpacity={0.8}>
                       <Text style={styles.wtEmptyText}>+ Add weight</Text>
                     </TouchableOpacity>
                   ) : (
-                    <View style={styles.wtBox}>
+                    <View style={[styles.wtBox, weightError && styles.wtBoxError]}>
                       <TouchableOpacity style={styles.wtStep} onPress={decrementWeight} activeOpacity={0.7}>
                         <Text style={styles.wtStepText}>–</Text>
                       </TouchableOpacity>
                       <View style={styles.wtVal}>
                         <TextInput
-                          style={styles.wtNumInput}
+                          testID="weight-input"
+                          ref={weightInputRef}
+                          style={[styles.wtNumInput, weightError && styles.wtNumInputError]}
                           value={weight}
                           onChangeText={text => {
                             let v = text.replace(/[^0-9.]/g, '');
                             const dot = v.indexOf('.');
                             if (dot !== -1) v = v.slice(0, dot + 1) + v.slice(dot + 1).replace(/\./g, '');
                             setWeight(v);
+                            setWeightError(false);
                           }}
+                          placeholder="0.0"
+                          placeholderTextColor="#C4B8E4"
+                          selectTextOnFocus
                           keyboardType="decimal-pad"
                           returnKeyType="done"
                         />
@@ -565,11 +660,14 @@ export default function TrackerScreen({ user }: Props) {
                         styles.saveBtn,
                         isEditing && styles.saveBtnEdit,
                         justSaved && styles.saveBtnDone,
-                        nothingEntered && !isEditing && styles.saveBtnWait,
+                        nothingEntered && styles.saveBtnWait,
                         saving && styles.disabled,
                       ]}
                       onPress={handleSave}
-                      disabled={saving || (nothingEntered && !isEditing)}
+                      // At least one of the three must be logged — when editing
+                      // too, not just when creating. Clearing every field is
+                      // what "Reset day" is for.
+                      disabled={saving || nothingEntered}
                       activeOpacity={0.85}
                     >
                       {saving ? (
@@ -577,7 +675,7 @@ export default function TrackerScreen({ user }: Props) {
                       ) : (
                         <Text style={[
                           styles.saveBtnText,
-                          nothingEntered && !isEditing && styles.saveBtnWaitText,
+                          nothingEntered && styles.saveBtnWaitText,
                         ]}>
                           {justSaved ? '✓  Saved' : 'Save'}
                         </Text>
@@ -615,6 +713,8 @@ export default function TrackerScreen({ user }: Props) {
           )}
         </ScrollView>
       </KeyboardAvoidingView>
+
+      <Toast toast={toast} onDismiss={() => setToast(null)} />
 
       {/* ── Bottom navigation (Top Accent Slide) ── */}
       <View style={styles.bottomNav} onLayout={e => setNavWidth(e.nativeEvent.layout.width)}>
@@ -758,6 +858,8 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
   },
   wtBoxLocked: { backgroundColor: '#F6F4FB' },
+  // Borders are inset in RN, so flagging the field keeps the fixed 60px height.
+  wtBoxError: { backgroundColor: '#FEF2F2', borderWidth: 1.5, borderColor: P.red },
   wtStep: {
     width: 38,
     height: 38,
@@ -773,17 +875,24 @@ const styles = StyleSheet.create({
   },
   wtStepText: { fontSize: 22, color: '#7C3AED', fontWeight: '700', lineHeight: 24 },
   wtSpacer: { width: 38 },
-  wtVal: { flexDirection: 'row', alignItems: 'baseline', gap: 3 },
-  wtNum: { fontSize: 28, fontWeight: '800', color: '#7C3AED', letterSpacing: -0.5 },
+  wtVal: { flexDirection: 'row', alignItems: 'center', gap: 6 },
+  wtNum: { fontSize: 26, fontWeight: '800', color: '#7C3AED', letterSpacing: -0.5 },
+  // A fixed width, not minWidth: on web the input would otherwise stretch to
+  // fill the row. 88px comfortably fits a 3-digit weight with one decimal.
   wtNumInput: {
-    fontSize: 28,
+    fontSize: 24,
     fontWeight: '800',
     color: '#7C3AED',
     letterSpacing: -0.5,
     textAlign: 'center',
-    minWidth: 86,
-    padding: 0,
+    width: 88,
+    height: 40,
+    paddingVertical: 0,
+    paddingHorizontal: 6,
+    borderRadius: 12,
+    backgroundColor: '#FFFFFF',
   },
+  wtNumInputError: { color: P.red },
   wtUnit: { fontSize: 13, color: P.textMuted, fontWeight: '700' },
   wtNotSpecified: { fontSize: 15, color: P.textMuted, fontWeight: '600' },
 
