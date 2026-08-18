@@ -7,5 +7,6 @@ module.exports = {
     '^victory-native$': '<rootDir>/__mocks__/victory-native.js',
     '^@shopify/react-native-skia$': '<rootDir>/__mocks__/@shopify/react-native-skia.js',
     '^react-native-reanimated$': '<rootDir>/__mocks__/react-native-reanimated.js',
+    '^expo-apple-authentication$': '<rootDir>/__mocks__/expo-apple-authentication.js',
   },
 };

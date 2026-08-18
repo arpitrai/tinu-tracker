@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   StyleSheet,
   Text,
@@ -16,6 +16,7 @@ import { LinearGradient } from 'expo-linear-gradient';
 import Svg, { Path, Circle } from 'react-native-svg';
 import * as WebBrowser from 'expo-web-browser';
 import * as AuthSession from 'expo-auth-session';
+import * as AppleAuthentication from 'expo-apple-authentication';
 import { supabase } from '../lib/supabase';
 
 WebBrowser.maybeCompleteAuthSession();
@@ -100,6 +101,19 @@ export default function SignInScreen() {
 
   const redirectTo = AuthSession.makeRedirectUri({ scheme: 'tinutracker' });
 
+  // Sign in with Apple is iOS 13+ only. Gate on the OS check rather than
+  // Platform.OS alone so an older iOS never gets a button that cannot work.
+  // Apple guideline 4.8 requires this option wherever a third-party login is
+  // offered, which is why it sits above Google with the same size and weight.
+  const [appleAvailable, setAppleAvailable] = useState(false);
+  useEffect(() => {
+    let active = true;
+    AppleAuthentication.isAvailableAsync()
+      .then(ok => { if (active) setAppleAvailable(ok); })
+      .catch(() => {});
+    return () => { active = false; };
+  }, []);
+
   const handleLogoTap = () => {
     if (emailMode) return;
     setLogoTaps(n => {
@@ -123,6 +137,45 @@ export default function SignInScreen() {
       if (error) throw error;
       // onAuthStateChange in App.tsx swaps to TrackerScreen on success.
     } catch (e: any) {
+      setError(e.message ?? 'Sign in failed. Please try again.');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const signInWithApple = async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      const credential = await AppleAuthentication.signInAsync({
+        requestedScopes: [
+          AppleAuthentication.AppleAuthenticationScope.FULL_NAME,
+          AppleAuthentication.AppleAuthenticationScope.EMAIL,
+        ],
+      });
+      if (!credential.identityToken) {
+        throw new Error('Apple did not return an identity token.');
+      }
+
+      // The identity token is a plain OIDC JWT, so Supabase can verify it
+      // server-side — no browser round-trip like the Google flow needs.
+      const { error } = await supabase.auth.signInWithIdToken({
+        provider: 'apple',
+        token: credential.identityToken,
+      });
+      if (error) throw error;
+
+      // Apple hands over the name only on the very first authorization; every
+      // later sign-in returns fullName: null. Capture it now or it is gone, and
+      // TrackerScreen falls back to the email prefix for its greeting.
+      const full = [credential.fullName?.givenName, credential.fullName?.familyName]
+        .filter(Boolean)
+        .join(' ');
+      if (full) await supabase.auth.updateUser({ data: { full_name: full } });
+      // onAuthStateChange in App.tsx swaps to TrackerScreen on success.
+    } catch (e: any) {
+      // Backing out of the Apple sheet is a choice, not a failure.
+      if (e?.code === 'ERR_REQUEST_CANCELED') return;
       setError(e.message ?? 'Sign in failed. Please try again.');
     } finally {
       setLoading(false);
@@ -250,23 +303,43 @@ export default function SignInScreen() {
               </TouchableOpacity>
             </>
           ) : (
-            <TouchableOpacity
-              style={[styles.googleBtn, loading && styles.disabled]}
-              onPress={signInWithGoogle}
-              disabled={loading}
-              activeOpacity={0.88}
-            >
-              {loading ? (
-                <ActivityIndicator color="#fff" />
-              ) : (
-                <>
-                  <View style={styles.googleChip}>
-                    <GoogleIcon size={16} />
-                  </View>
-                  <Text style={styles.googleBtnText}>Continue with Google</Text>
-                </>
+            <>
+              {/* Apple's own button component — its wording, mark and layout are
+                  prescribed by the Human Interface Guidelines, so it is not
+                  restyled beyond height and corner radius to match Google's. */}
+              {appleAvailable && (
+                <View
+                  style={loading ? styles.disabled : undefined}
+                  pointerEvents={loading ? 'none' : 'auto'}
+                  testID="apple-signin"
+                >
+                  <AppleAuthentication.AppleAuthenticationButton
+                    buttonType={AppleAuthentication.AppleAuthenticationButtonType.CONTINUE}
+                    buttonStyle={AppleAuthentication.AppleAuthenticationButtonStyle.BLACK}
+                    cornerRadius={16}
+                    style={styles.appleBtn}
+                    onPress={signInWithApple}
+                  />
+                </View>
               )}
-            </TouchableOpacity>
+              <TouchableOpacity
+                style={[styles.googleBtn, loading && styles.disabled]}
+                onPress={signInWithGoogle}
+                disabled={loading}
+                activeOpacity={0.88}
+              >
+                {loading ? (
+                  <ActivityIndicator color="#fff" />
+                ) : (
+                  <>
+                    <View style={styles.googleChip}>
+                      <GoogleIcon size={16} />
+                    </View>
+                    <Text style={styles.googleBtnText}>Continue with Google</Text>
+                  </>
+                )}
+              </TouchableOpacity>
+            </>
           )}
 
           {/* Only shown once the hidden email path is unlocked — lets you back out. */}
@@ -349,6 +422,9 @@ const styles = StyleSheet.create({
 
   // CTA
   cta: { paddingHorizontal: 28, paddingBottom: 24, gap: 16 },
+  // Same height as the Google button — guideline 4.8 is about the option being
+  // equivalent, and a visibly smaller button reads as the lesser choice.
+  appleBtn: { height: 56, width: '100%' },
   googleBtn: {
     flexDirection: 'row',
     alignItems: 'center',
