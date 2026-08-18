@@ -32,6 +32,7 @@ import SplitToggle from '../components/SplitToggle';
 import CalendarModal from '../components/CalendarModal';
 import HistoryTable from '../components/HistoryTable';
 import Toast, { type ToastKind, type ToastState } from '../components/Toast';
+import UnsavedChangesModal from '../components/UnsavedChangesModal';
 import Svg, { Path } from 'react-native-svg';
 
 function NavListIcon({ color }: { color: string }) {
@@ -106,6 +107,15 @@ function pickSeedWeight(entries: Iterable<DayEntry>, forDate: string): string {
   }
   const pick = before ?? after;
   return pick ? String(pick.weight) : '70.0';
+}
+
+// Weights are compared numerically, not as strings: stepping 70 up and back
+// down yields "70.0", which is the same reading the day was saved with.
+function sameWeight(a: string, b: string): boolean {
+  const na = parseFloat(a);
+  const nb = parseFloat(b);
+  if (Number.isNaN(na) && Number.isNaN(nb)) return true; // both blank
+  return na === nb;
 }
 
 function getFirstName(user: User): string {
@@ -200,6 +210,24 @@ export default function TrackerScreen({ user }: Props) {
   const hasSavedEntry = allEntries.has(selectedDate);
   const readOnly = hasSavedEntry && !isEditing;
 
+  // True when the form no longer matches what is stored for the day — either
+  // new entries on an unlogged day, or edits to a saved one. Everything that
+  // navigates away from the day is routed through `guardedNav` below, which
+  // asks the user to save first while this is true.
+  const isDirty = useMemo(() => {
+    const saved = allEntries.get(selectedDate);
+    const savedWeight = saved?.weight != null ? String(saved.weight) : '';
+    return (
+      exercised !== (saved?.exercised ?? null) ||
+      ateSweets !== (saved?.ate_sweets ?? null) ||
+      !sameWeight(weight, savedWeight)
+    );
+  }, [allEntries, selectedDate, exercised, ateSweets, weight]);
+
+  // The navigation the guard prompt is holding back, replayed on Save/Discard.
+  const pendingNav = useRef<(() => void) | null>(null);
+  const [guardVisible, setGuardVisible] = useState(false);
+
   const loadData = useCallback(async () => {
     setLoading(true);
     const { data, error } = await supabase
@@ -263,30 +291,74 @@ export default function TrackerScreen({ user }: Props) {
     setWeightError(false);
   }, [allEntries]);
 
-  const goLeft = () => navigateToDate(offsetDateStr(selectedDate, -1));
-  const goRight = () => { if (!isToday) navigateToDate(offsetDateStr(selectedDate, 1)); };
-
-  const handleCancelEdit = useCallback(() => {
+  // Drop whatever is in the form and show the stored day again (nothing stored
+  // = the empty state). Used by Discard and by hardware back while editing.
+  const revertToSaved = useCallback(() => {
     const entry = allEntries.get(selectedDate);
-    if (entry) {
-      setExercised(entry.exercised);
-      setAteSweets(entry.ate_sweets);
-      setWeight(entry.weight != null ? String(entry.weight) : '');
-    }
+    setExercised(entry?.exercised ?? null);
+    setAteSweets(entry?.ate_sweets ?? null);
+    setWeight(entry?.weight != null ? String(entry.weight) : '');
     setIsEditing(false);
     setWeightActive(false);
     setWeightError(false);
   }, [allEntries, selectedDate]);
 
-  // Hardware back while editing reverts to the saved view (replaces the old Cancel button).
+  // Every exit from the current day goes through here: run it straight away
+  // when there is nothing to lose, otherwise park it behind the prompt.
+  // An open editor counts even with nothing changed yet — leaving mid-edit
+  // should never be silent.
+  const guardedNav = useCallback((run: () => void) => {
+    if (isDirty || isEditing) {
+      pendingNav.current = run;
+      setGuardVisible(true);
+      return;
+    }
+    run();
+  }, [isDirty, isEditing]);
+
+  const runPendingNav = useCallback(() => {
+    const run = pendingNav.current;
+    pendingNav.current = null;
+    setGuardVisible(false);
+    run?.();
+  }, []);
+
+  const dismissGuard = useCallback(() => {
+    pendingNav.current = null;
+    setGuardVisible(false);
+  }, []);
+
+  const goLeft = () => guardedNav(() => navigateToDate(offsetDateStr(selectedDate, -1)));
+  const goRight = () => {
+    if (!isToday) guardedNav(() => navigateToDate(offsetDateStr(selectedDate, 1)));
+  };
+
+  // Hardware back: unsaved work asks first; an untouched editor just reverts to
+  // the saved view without a prompt — back is this screen's Cancel gesture
+  // (it replaced the old Cancel button), so asking there would be circular.
   useEffect(() => {
     const onBack = () => {
-      if (isEditing) { handleCancelEdit(); return true; }
+      if (guardVisible) { dismissGuard(); return true; }
+      if (isDirty) { guardedNav(revertToSaved); return true; }
+      if (isEditing) { revertToSaved(); return true; }
       return false;
     };
     const sub = BackHandler.addEventListener('hardwareBackPress', onBack);
     return () => sub.remove();
-  }, [isEditing, handleCancelEdit]);
+  }, [guardVisible, dismissGuard, isDirty, guardedNav, isEditing, revertToSaved]);
+
+  // Web only: the same protection for a tab close or reload, which no in-app
+  // handler can intercept. The browser shows its own generic prompt.
+  useEffect(() => {
+    if (Platform.OS !== 'web' || typeof window === 'undefined') return;
+    if (!isDirty) return;
+    const onBeforeUnload = (e: BeforeUnloadEvent) => {
+      e.preventDefault();
+      e.returnValue = '';
+    };
+    window.addEventListener('beforeunload', onBeforeUnload);
+    return () => window.removeEventListener('beforeunload', onBeforeUnload);
+  }, [isDirty]);
 
   // Open the weight editor seeded with the nearest recorded weight (or 70.0),
   // then focus and select it so typing a different number replaces the seed
@@ -326,20 +398,22 @@ export default function TrackerScreen({ user }: Props) {
   const incrementWeight = () => stepWeight(0.1);
   const decrementWeight = () => stepWeight(-0.1);
 
-  const handleSave = async () => {
+  // Resolves to true only when the day actually reached the database — the
+  // unsaved-changes prompt uses that to decide whether to let the user leave.
+  const handleSave = async (): Promise<boolean> => {
     // Any single metric is enough to save a day, but a completely empty day is
     // not a day — that is what "Reset day" is for. The Save button is disabled
     // in this state; this guard keeps the rule true however it is reached.
     if (nothingEntered) {
       showToast('error', 'Log exercise, sugar or weight before saving.');
-      return;
+      return false;
     }
 
     const wt = validateWeight(weight);
     if (!wt.ok) {
       setWeightError(true);
       showToast('error', wt.message ?? 'Check the weight you entered');
-      return;
+      return false;
     }
     setWeightError(false);
 
@@ -358,7 +432,7 @@ export default function TrackerScreen({ user }: Props) {
         setWeightError(true);
       }
       showToast('error', friendlyWriteError(error, 'save'));
-      return;
+      return false;
     }
 
     setWeight(wt.value ?? '');
@@ -373,6 +447,14 @@ export default function TrackerScreen({ user }: Props) {
     showToast('success', 'Saved');
     if (justSavedTimer.current) clearTimeout(justSavedTimer.current);
     justSavedTimer.current = setTimeout(() => setJustSaved(false), 2000);
+    return true;
+  };
+
+  // "Save" inside the prompt. A failed write keeps the user on the day so they
+  // can see the error toast (which the modal would otherwise cover) and retry.
+  const handleGuardSave = async () => {
+    if (await handleSave()) runPendingNav();
+    else dismissGuard();
   };
 
   const performReset = async () => {
@@ -479,7 +561,7 @@ export default function TrackerScreen({ user }: Props) {
         visible={menuVisible}
         onClose={() => setMenuVisible(false)}
         onProfile={() => setProfileVisible(true)}
-        onSignOut={() => supabase.auth.signOut()}
+        onSignOut={() => guardedNav(() => { supabase.auth.signOut(); })}
       />
       <ProfileModal
         visible={profileVisible}
@@ -493,8 +575,18 @@ export default function TrackerScreen({ user }: Props) {
         selectedDate={selectedDate}
         today={today}
         hasEntry={hasEntryFor}
-        onSelect={navigateToDate}
+        onSelect={(d) => guardedNav(() => navigateToDate(d))}
         onClose={() => setCalendarVisible(false)}
+      />
+      <UnsavedChangesModal
+        visible={guardVisible}
+        dateLabel={formatDatePretty(selectedDate)}
+        hasChanges={isDirty}
+        canSave={!nothingEntered}
+        saving={saving}
+        onSave={handleGuardSave}
+        onDiscard={() => { revertToSaved(); runPendingNav(); }}
+        onCancel={dismissGuard}
       />
 
       <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'} style={styles.flex}>
@@ -701,7 +793,10 @@ export default function TrackerScreen({ user }: Props) {
 
               {/* ── Recent history (hidden until the user has logged at least one day ever) ── */}
               {allEntries.size > 0 && (
-                <HistoryTable entries={recentEntries} onRowPress={navigateToDate} />
+                <HistoryTable
+                  entries={recentEntries}
+                  onRowPress={(d) => guardedNav(() => navigateToDate(d))}
+                />
               )}
             </>
           ) : (
@@ -732,7 +827,11 @@ export default function TrackerScreen({ user }: Props) {
           <NavListIcon color={activeTab === 'entries' ? P.text : P.textMuted} />
           <Text style={[styles.navLabel, activeTab === 'entries' && styles.navLabelActive]}>Daily Log</Text>
         </TouchableOpacity>
-        <TouchableOpacity style={styles.navItem} onPress={() => setActiveTab('trend')} activeOpacity={0.7}>
+        <TouchableOpacity
+          style={styles.navItem}
+          onPress={() => guardedNav(() => setActiveTab('trend'))}
+          activeOpacity={0.7}
+        >
           <NavTrendIcon color={activeTab === 'trend' ? P.text : P.textMuted} />
           <Text style={[styles.navLabel, activeTab === 'trend' && styles.navLabelActive]}>Trend</Text>
         </TouchableOpacity>

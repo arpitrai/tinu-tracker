@@ -441,9 +441,15 @@ export default function TrendsChart({ entries, today, onJumpToDate }: Props) {
     };
   }, [rangeMap, totalDays]);
 
-  const subtitle = preset === 'CUSTOM'
-    ? `Custom · ${fmtPretty(startDate)} – ${fmtPretty(endDate)} · ${totalDays} days`
-    : `Last ${PRESET_DAYS[preset]} days · ${fmtPretty(startDate)} – ${fmtPretty(endDate)}`;
+  // The window every number on this screen is computed over. It headlines the
+  // selector card and is echoed on the chart and above the averages, so the
+  // period is still on screen once the selector has scrolled away.
+  const periodTitle = preset === 'CUSTOM' ? 'Custom range' : `Last ${PRESET_DAYS[preset]} days`;
+  const periodDates = preset === 'CUSTOM'
+    ? `${fmtPretty(startDate)} – ${fmtPretty(endDate)} · ${totalDays} days`
+    : `${fmtPretty(startDate)} – ${fmtPretty(endDate)}`;
+  // Short form for the echoes, where it trails other words.
+  const periodPhrase = preset === 'CUSTOM' ? `${totalDays} days` : `last ${PRESET_DAYS[preset]} days`;
 
   // No logged days at all in the selected window: keep the card shell visible but
   // swap the data for a message so the user knows what to do.
@@ -463,6 +469,8 @@ export default function TrendsChart({ entries, today, onJumpToDate }: Props) {
     <View style={s.wrap}>
       {/* ── Period selector ── */}
       <View style={s.card}>
+        <Text style={s.periodTitle}>{periodTitle}</Text>
+        <Text style={s.periodDates}>{periodDates}</Text>
         <View style={s.pillRow}>
           {PRESETS.map(({ key, label }) => {
             const on = preset === key;
@@ -478,7 +486,6 @@ export default function TrendsChart({ entries, today, onJumpToDate }: Props) {
             );
           })}
         </View>
-        <Text style={s.subtitle}>{subtitle}</Text>
       </View>
 
       {/* ── Empty-state message (selected window has no logged days) ── */}
@@ -496,7 +503,7 @@ export default function TrendsChart({ entries, today, onJumpToDate }: Props) {
         <View style={s.chartHeader}>
           <View>
             <Text style={s.sectionTitle}>Weight</Text>
-            <Text style={s.sectionSub}>kg over time</Text>
+            <Text style={s.sectionSub}>kg · {periodPhrase}</Text>
           </View>
           <View style={s.granRow}>
             {GRAN.map(({ key, label }) => {
@@ -521,26 +528,29 @@ export default function TrendsChart({ entries, today, onJumpToDate }: Props) {
       </View>
 
       {/* ── Averages ── */}
-      <View style={s.summaryRow}>
-        <View style={s.summaryCard}>
-          <Text style={s.cardLabel}>Avg weight</Text>
-          <Text style={[s.cardValue, { color: C.weight }]}>
-            {stats.avgW != null ? stats.avgW.toFixed(1) : '-'}
-            {stats.avgW != null && <Text style={s.cardUnit}> kg</Text>}
-          </Text>
-          <Text style={s.cardSub}>
-            {stats.readings} reading{stats.readings === 1 ? '' : 's'}
-          </Text>
-        </View>
-        <View style={s.summaryCard}>
-          <Text style={s.cardLabel}>Exercise</Text>
-          <Text style={[s.cardValue, { color: C.exercise }]}>{stats.exPct}%</Text>
-          <Text style={s.cardSub}>{stats.exDays} of {totalDays} days</Text>
-        </View>
-        <View style={s.summaryCard}>
-          <Text style={s.cardLabel}>Sugar</Text>
-          <Text style={[s.cardValue, { color: C.sugar }]}>{stats.sugarPct}%</Text>
-          <Text style={s.cardSub}>{stats.sugarDays} of {totalDays} days</Text>
+      <View style={s.summarySection}>
+        <Text style={s.rowLabel}>{periodPhrase}</Text>
+        <View style={s.summaryRow}>
+          <View style={s.summaryCard}>
+            <Text style={s.cardLabel}>Avg weight</Text>
+            <Text style={[s.cardValue, { color: C.weight }]}>
+              {stats.avgW != null ? stats.avgW.toFixed(1) : '-'}
+              {stats.avgW != null && <Text style={s.cardUnit}> kg</Text>}
+            </Text>
+            <Text style={s.cardSub}>
+              {stats.readings} reading{stats.readings === 1 ? '' : 's'}
+            </Text>
+          </View>
+          <View style={s.summaryCard}>
+            <Text style={s.cardLabel}>Exercise</Text>
+            <Text style={[s.cardValue, { color: C.exercise }]}>{stats.exPct}%</Text>
+            <Text style={s.cardSub}>{stats.exDays} of {totalDays} days</Text>
+          </View>
+          <View style={s.summaryCard}>
+            <Text style={s.cardLabel}>Sugar</Text>
+            <Text style={[s.cardValue, { color: C.sugar }]}>{stats.sugarPct}%</Text>
+            <Text style={s.cardSub}>{stats.sugarDays} of {totalDays} days</Text>
+          </View>
         </View>
       </View>
 
@@ -583,6 +593,10 @@ const s = StyleSheet.create({
     overflow: 'visible',
   },
 
+  // Period header — the headline for every number on this screen
+  periodTitle: { fontSize: 19, fontWeight: '800', color: C.text, letterSpacing: -0.4 },
+  periodDates: { fontSize: 12, fontWeight: '600', color: C.textMuted, marginTop: 2, marginBottom: 11 },
+
   // Period pills
   pillRow: {
     flexDirection: 'row',
@@ -600,7 +614,6 @@ const s = StyleSheet.create({
   pillBtnOn: { backgroundColor: C.pillActive },
   pillTxt: { fontSize: 12.5, fontWeight: '700', color: '#9A9082' },
   pillTxtOn: { color: C.pillActiveText },
-  subtitle: { fontSize: 11.5, color: '#9A9082', fontWeight: '600', marginTop: 9, textAlign: 'center' },
 
   // Empty-state banner
   emptyBanner: { alignItems: 'center', gap: 6, paddingVertical: 22 },
@@ -646,6 +659,15 @@ const s = StyleSheet.create({
   chartEmptyText: { fontSize: 12.5, color: C.textMuted, fontWeight: '600' },
 
   // Averages
+  summarySection: { gap: 7 },
+  rowLabel: {
+    fontSize: 10,
+    fontWeight: '700',
+    color: C.textMuted,
+    letterSpacing: 0.6,
+    textTransform: 'uppercase',
+    marginLeft: 2,
+  },
   summaryRow: { flexDirection: 'row', gap: 10 },
   summaryCard: {
     flex: 1,
