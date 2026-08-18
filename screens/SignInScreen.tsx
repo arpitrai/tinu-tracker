@@ -333,7 +333,7 @@ export default function SignInScreen() {
                 ) : (
                   <>
                     <View style={styles.googleChip}>
-                      <GoogleIcon size={16} />
+                      <GoogleIcon size={19} />
                     </View>
                     <Text style={styles.googleBtnText}>Continue with Google</Text>
                   </>
@@ -439,16 +439,21 @@ const styles = StyleSheet.create({
     shadowRadius: 14,
     elevation: 6,
   },
+  // Scaled with the label so the G reads at the same weight as Apple's glyph.
   googleChip: {
-    width: 24,
-    height: 24,
-    borderRadius: 7,
+    width: 28,
+    height: 28,
+    borderRadius: 8,
     backgroundColor: '#fff',
     alignItems: 'center',
     justifyContent: 'center',
   },
   disabled: { opacity: 0.5 },
-  googleBtnText: { fontSize: 15, fontWeight: '700', color: '#FFFFFF', letterSpacing: 0.1 },
+  // Sized to match Apple's button, not to taste: ASAuthorizationAppleIDButton
+  // derives its label from the button height and exposes no font prop, so ours
+  // is the only side that can move. Measured off a 56pt-tall button capture —
+  // Apple's label renders at ~20.5pt semibold with no extra tracking.
+  googleBtnText: { fontSize: 21.2, fontWeight: '600', color: '#FFFFFF', letterSpacing: 0 },
   error: { color: '#DC2626', fontSize: 13, textAlign: 'center' },
 
   // Email/password fields (secondary path)
