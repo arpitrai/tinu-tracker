@@ -20,6 +20,8 @@ import {
   AppState,
 } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
+import { Gesture, GestureDetector } from 'react-native-gesture-handler';
+import { runOnJS } from 'react-native-reanimated';
 import { supabase } from '../lib/supabase';
 import { setLoggedDates, syncDailyReminders } from '../lib/notifications';
 import { validateWeight } from '../lib/weight';
@@ -328,24 +330,69 @@ export default function TrackerScreen({ user }: Props) {
     setGuardVisible(false);
   }, []);
 
+  // The two tabs are the app's only "pages", so switching them is what back and
+  // a horizontal swipe both mean. Leaving the log is guarded; returning to it is
+  // not — the guard is about abandoning unsaved entries, not about arriving.
+  const switchTab = useCallback((next: Tab) => {
+    if (next === activeTab) return;
+    if (next === 'trend') guardedNav(() => setActiveTab('trend'));
+    else setActiveTab('entries');
+  }, [activeTab, guardedNav]);
+
+  // Swipe left for Trend, right for Daily Log — the gesture users arrive
+  // expecting from any tabbed app. activeOffsetX/failOffsetY keep it from
+  // stealing the vertical scroll: it only takes over on a decisive sideways
+  // drag, and gives up entirely once the finger has moved vertically.
+  const swipeTabs = useMemo(
+    () =>
+      Gesture.Pan()
+        .activeOffsetX([-24, 24])
+        .failOffsetY([-18, 18])
+        .onEnd((e) => {
+          if (e.translationX <= -60) runOnJS(switchTab)('trend');
+          else if (e.translationX >= 60) runOnJS(switchTab)('entries');
+        }),
+    [switchTab],
+  );
+
   const goLeft = () => guardedNav(() => navigateToDate(offsetDateStr(selectedDate, -1)));
   const goRight = () => {
     if (!isToday) guardedNav(() => navigateToDate(offsetDateStr(selectedDate, 1)));
   };
 
-  // Hardware back: unsaved work asks first; an untouched editor just reverts to
-  // the saved view without a prompt — back is this screen's Cancel gesture
-  // (it replaced the old Cancel button), so asking there would be circular.
+  // Android back / edge-swipe. There is no navigation stack to pop, so this is
+  // the app's whole back hierarchy, innermost first. Returning false hands the
+  // press to the OS, which closes the app — so that must stay the last resort,
+  // reachable only from the Daily Log on today with nothing open.
   useEffect(() => {
     const onBack = () => {
+      // 1. Anything overlaid closes first. (Each Modal also has its own
+      //    onRequestClose; these cover the ones driven from this screen.)
       if (guardVisible) { dismissGuard(); return true; }
+      if (calendarVisible) { setCalendarVisible(false); return true; }
+      if (profileVisible) { setProfileVisible(false); return true; }
+      if (menuVisible) { setMenuVisible(false); return true; }
+
+      // 2. Unsaved work asks before anything is lost; an untouched editor just
+      //    reverts, since back is this screen's Cancel gesture (it replaced the
+      //    old Cancel button) and asking there would be circular.
       if (isDirty) { guardedNav(revertToSaved); return true; }
       if (isEditing) { revertToSaved(); return true; }
-      return false;
+
+      // 3. Then unwind the screen itself: Trend back to the log, a past day
+      //    back to today. Both are what the user last navigated away from.
+      if (activeTab !== 'entries') { setActiveTab('entries'); return true; }
+      if (!isToday) { navigateToDate(today); return true; }
+
+      return false; // Daily Log, today, nothing open — let the OS exit.
     };
     const sub = BackHandler.addEventListener('hardwareBackPress', onBack);
     return () => sub.remove();
-  }, [guardVisible, dismissGuard, isDirty, guardedNav, isEditing, revertToSaved]);
+  }, [
+    guardVisible, dismissGuard, calendarVisible, profileVisible, menuVisible,
+    isDirty, guardedNav, isEditing, revertToSaved, activeTab, isToday,
+    navigateToDate, today,
+  ]);
 
   // Web only: the same protection for a tab close or reload, which no in-app
   // handler can intercept. The browser shows its own generic prompt.
@@ -590,6 +637,7 @@ export default function TrackerScreen({ user }: Props) {
       />
 
       <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'} style={styles.flex}>
+        <GestureDetector gesture={swipeTabs}>
         <ScrollView contentContainerStyle={styles.scroll} keyboardShouldPersistTaps="handled">
 
           {activeTab === 'entries' ? (
@@ -807,6 +855,7 @@ export default function TrackerScreen({ user }: Props) {
             />
           )}
         </ScrollView>
+        </GestureDetector>
       </KeyboardAvoidingView>
 
       <Toast toast={toast} onDismiss={() => setToast(null)} />
@@ -823,15 +872,11 @@ export default function TrackerScreen({ user }: Props) {
             />
           </Animated.View>
         )}
-        <TouchableOpacity style={styles.navItem} onPress={() => setActiveTab('entries')} activeOpacity={0.7}>
+        <TouchableOpacity style={styles.navItem} onPress={() => switchTab('entries')} activeOpacity={0.7}>
           <NavListIcon color={activeTab === 'entries' ? P.text : P.textMuted} />
           <Text style={[styles.navLabel, activeTab === 'entries' && styles.navLabelActive]}>Daily Log</Text>
         </TouchableOpacity>
-        <TouchableOpacity
-          style={styles.navItem}
-          onPress={() => guardedNav(() => setActiveTab('trend'))}
-          activeOpacity={0.7}
-        >
+        <TouchableOpacity style={styles.navItem} onPress={() => switchTab('trend')} activeOpacity={0.7}>
           <NavTrendIcon color={activeTab === 'trend' ? P.text : P.textMuted} />
           <Text style={[styles.navLabel, activeTab === 'trend' && styles.navLabelActive]}>Trend</Text>
         </TouchableOpacity>

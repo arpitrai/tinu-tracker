@@ -23,6 +23,11 @@ module.exports = {
   useAnimatedReaction: () => {},
   runOnJS: (fn) => fn,
   useSharedValue: (v) => ({ value: v }),
+  // react-native-gesture-handler's GestureDetector reaches for these through
+  // its reanimated wrapper. Stubs are enough: gestures never fire under the
+  // test renderer, but the component has to mount for the screen to render.
+  useEvent: () => ({}),
+  useHandler: () => ({ context: {}, doDependenciesDiffer: false }),
   withTiming: (v) => v,
   withDelay: (_delay, v) => v,
   withSpring: (v) => v,
