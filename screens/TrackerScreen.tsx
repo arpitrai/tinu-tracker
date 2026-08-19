@@ -35,20 +35,29 @@ import CalendarModal from '../components/CalendarModal';
 import HistoryTable from '../components/HistoryTable';
 import Toast, { type ToastKind, type ToastState } from '../components/Toast';
 import UnsavedChangesModal from '../components/UnsavedChangesModal';
-import Svg, { Path } from 'react-native-svg';
+import Svg, { Path, Rect } from 'react-native-svg';
 
+// Solid glyphs rather than hairline strokes: at 24px in a busy screen the
+// silhouette is what reads, and the old 2px outlines receded behind their own
+// labels. The knockout bars are painted in the nav's own background colour so
+// they read as gaps in the page rather than white marks on it.
 function NavListIcon({ color }: { color: string }) {
   return (
-    <Svg width={22} height={22} viewBox="0 0 24 24">
-      <Path d="M3 6h18M3 12h18M3 18h18" stroke={color} strokeWidth="2" strokeLinecap="round" />
+    <Svg width={24} height={24} viewBox="0 0 24 24">
+      <Rect x="3" y="3" width="18" height="18" rx="4.5" fill={color} />
+      <Rect x="6.6" y="8" width="10.8" height="1.9" rx="0.95" fill={P.bg} />
+      <Rect x="6.6" y="11.6" width="10.8" height="1.9" rx="0.95" fill={P.bg} />
+      <Rect x="6.6" y="15.2" width="6.6" height="1.9" rx="0.95" fill={P.bg} />
     </Svg>
   );
 }
 
 function NavTrendIcon({ color }: { color: string }) {
   return (
-    <Svg width={22} height={22} viewBox="0 0 24 24">
-      <Path d="M4 18L9 12L13 15L20 7" stroke={color} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+    <Svg width={24} height={24} viewBox="0 0 24 24">
+      <Rect x="3" y="13" width="4.4" height="8" rx="1.6" fill={color} />
+      <Rect x="9.8" y="8.5" width="4.4" height="12.5" rx="1.6" fill={color} />
+      <Rect x="16.6" y="3.6" width="4.4" height="17.4" rx="1.6" fill={color} />
     </Svg>
   );
 }
