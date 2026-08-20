@@ -117,7 +117,7 @@ describe('saving a day', () => {
     await typeWeight('70');
     pressSave();
 
-    await waitFor(async () => expect(await toastText()).toBe('Saved'));
+    await waitFor(async () => expect(await toastText()).toBe('Changes saved'));
   });
 
   it('surfaces a save failure instead of silently doing nothing', async () => {

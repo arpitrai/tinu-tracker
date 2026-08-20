@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
   Modal,
   View,
@@ -20,6 +20,7 @@ import DateTimePicker, { DateTimePickerEvent } from '@react-native-community/dat
 import { supabase } from '../lib/supabase';
 import type { User } from '@supabase/supabase-js';
 import { loadReminderTimes, saveReminderTimes, syncDailyReminders } from '../lib/notifications';
+import Toast, { type ToastKind, type ToastState } from './Toast';
 
 interface Props {
   visible: boolean;
@@ -55,6 +56,15 @@ export default function ProfileModal({ visible, onClose, user, avatarUrl, onName
   const [showPicker, setShowPicker] = useState(false);
   const [pickerValue, setPickerValue] = useState(new Date());
 
+  // Saving keeps the user on this screen, so a toast is the only confirmation
+  // they get. This modal needs its own — the tracker's Toast renders behind it.
+  const [toast, setToast] = useState<ToastState | null>(null);
+  const toastSeq = useRef(0);
+  const showToast = (kind: ToastKind, message: string) => {
+    toastSeq.current += 1;
+    setToast({ id: toastSeq.current, kind, message });
+  };
+
   const remindersOn = times.length > 0;
 
   useEffect(() => {
@@ -70,16 +80,31 @@ export default function ProfileModal({ visible, onClose, user, avatarUrl, onName
   // Single source of truth: persist `next` and (re)schedule the OS notifications.
   // Reverts if the user denied the notification permission.
   const commitTimes = async (next: string[]) => {
-    const sorted = await saveReminderTimes(next);
-    setTimes(sorted);
-    const ok = await syncDailyReminders();
+    let sorted: string[];
+    let ok: boolean;
+    try {
+      sorted = await saveReminderTimes(next);
+      setTimes(sorted);
+      ok = await syncDailyReminders();
+    } catch {
+      // Storage or the OS scheduler refused. Say so rather than leaving the
+      // switch looking changed with nothing behind it.
+      showToast('error', "Couldn't update your reminders. Please try again.");
+      setTimes(await loadReminderTimes());
+      return;
+    }
     if (!ok && sorted.length > 0) {
       setTimes(await saveReminderTimes([]));
       await syncDailyReminders();
       const msg = 'Enable notifications for Tinu Tracker in your device Settings to get reminders.';
       if (Platform.OS === 'web') window.alert(msg);
       else Alert.alert('Notifications are off', msg);
+      return;
     }
+    // Reminder edits persist the moment they are made, so they get the same
+    // receipt as the name — otherwise the only settings that confirm anything
+    // would be the ones behind a button.
+    showToast('success', 'Changes saved');
   };
 
   const toggleReminders = (on: boolean) => commitTimes(on ? (times.length ? times : [DEFAULT_TIME]) : []);
@@ -104,7 +129,10 @@ export default function ProfileModal({ visible, onClose, user, avatarUrl, onName
       const { error: nameErr } = await supabase.auth.updateUser({ data: { full_name: trimmed } });
       if (nameErr) throw nameErr;
       onNameSaved?.(trimmed);
-      onClose();
+      // Deliberately stays open: closing the screen on save gave no confirmation
+      // that anything happened, and dropped the user somewhere they didn't ask
+      // to be. The toast is the receipt; leaving is the user's call.
+      showToast('success', 'Changes saved');
     } catch (e: any) {
       setError(e.message ?? 'Something went wrong');
     }
@@ -162,8 +190,11 @@ export default function ProfileModal({ visible, onClose, user, avatarUrl, onName
               end={{ x: 0.9, y: 1 }}
               style={styles.hero}
             >
+              {/* "Close", not "Cancel": reminders apply instantly and the name
+                  now saves in place, so this dismisses the screen rather than
+                  undoing anything. */}
               <TouchableOpacity onPress={onClose} disabled={busy} hitSlop={12} style={styles.cancelBtn}>
-                <Text style={styles.cancelText}>Cancel</Text>
+                <Text style={styles.cancelText}>Close</Text>
               </TouchableOpacity>
             </LinearGradient>
 
@@ -302,6 +333,8 @@ export default function ProfileModal({ visible, onClose, user, avatarUrl, onName
         ) : showPicker ? (
           <DateTimePicker value={pickerValue} mode="time" is24Hour={false} display="default" onChange={onPickerChange} />
         ) : null}
+
+        <Toast toast={toast} onDismiss={() => setToast(null)} />
 
         <StatusBar barStyle="light-content" />
       </View>

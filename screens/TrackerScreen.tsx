@@ -500,7 +500,7 @@ export default function TrackerScreen({ user }: Props) {
     });
     setJustSaved(true);
     setIsEditing(false);
-    showToast('success', 'Saved');
+    showToast('success', 'Changes saved');
     if (justSavedTimer.current) clearTimeout(justSavedTimer.current);
     justSavedTimer.current = setTimeout(() => setJustSaved(false), 2000);
     return true;
