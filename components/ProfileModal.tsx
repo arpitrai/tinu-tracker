@@ -77,50 +77,26 @@ export default function ProfileModal({ visible, onClose, user, avatarUrl, onName
     loadReminderTimes().then(setTimes);
   }, [visible, user]);
 
-  // Single source of truth: persist `next` and (re)schedule the OS notifications.
-  // Reverts if the user denied the notification permission.
-  const commitTimes = async (next: string[]) => {
-    let sorted: string[];
-    let ok: boolean;
-    try {
-      sorted = await saveReminderTimes(next);
-      setTimes(sorted);
-      ok = await syncDailyReminders();
-    } catch {
-      // Storage or the OS scheduler refused. Say so rather than leaving the
-      // switch looking changed with nothing behind it.
-      showToast('error', "Couldn't update your reminders. Please try again.");
-      setTimes(await loadReminderTimes());
-      return;
-    }
-    if (!ok && sorted.length > 0) {
-      setTimes(await saveReminderTimes([]));
-      await syncDailyReminders();
-      const msg = 'Enable notifications for Tinu Tracker in your device Settings to get reminders.';
-      if (Platform.OS === 'web') window.alert(msg);
-      else Alert.alert('Notifications are off', msg);
-      return;
-    }
-    // Reminder edits persist the moment they are made, so they get the same
-    // receipt as the name — otherwise the only settings that confirm anything
-    // would be the ones behind a button.
-    showToast('success', 'Changes saved');
-  };
+  // Reminder edits are a draft until Save is pressed — nothing is written to
+  // storage and no notification is rescheduled before then. Closing the screen
+  // discards them, exactly like an edited name.
+  const draftTimes = (next: string[]) => setTimes([...new Set(next)].sort());
 
-  const toggleReminders = (on: boolean) => commitTimes(on ? (times.length ? times : [DEFAULT_TIME]) : []);
+  const toggleReminders = (on: boolean) => draftTimes(on ? (times.length ? times : [DEFAULT_TIME]) : []);
   const togglePreset = (t: string) =>
-    commitTimes(times.includes(t) ? times.filter((x) => x !== t) : [...times, t]);
-  const removeTime = (t: string) => commitTimes(times.filter((x) => x !== t));
+    draftTimes(times.includes(t) ? times.filter((x) => x !== t) : [...times, t]);
+  const removeTime = (t: string) => draftTimes(times.filter((x) => x !== t));
 
   const onPickerChange = (event: DateTimePickerEvent, date?: Date) => {
     if (Platform.OS === 'android') {
       setShowPicker(false);
-      if (event.type === 'set' && date) commitTimes([...times, toHHMM(date)]);
+      if (event.type === 'set' && date) draftTimes([...times, toHHMM(date)]);
     } else if (date) {
-      setPickerValue(date); // iOS spinner updates live; committed via Done
+      setPickerValue(date); // iOS spinner updates live; committed via Add
     }
   };
 
+  // The one place anything on this screen is written: name and reminders both.
   const handleSave = async () => {
     setSaving(true);
     setError(null);
@@ -129,6 +105,21 @@ export default function ProfileModal({ visible, onClose, user, avatarUrl, onName
       const { error: nameErr } = await supabase.auth.updateUser({ data: { full_name: trimmed } });
       if (nameErr) throw nameErr;
       onNameSaved?.(trimmed);
+
+      const sorted = await saveReminderTimes(times);
+      setTimes(sorted);
+      const ok = await syncDailyReminders();
+      if (!ok && sorted.length > 0) {
+        // Permission was refused, so reminders can't run. Turn them back off
+        // rather than leaving the screen promising nudges that never arrive.
+        setTimes(await saveReminderTimes([]));
+        await syncDailyReminders();
+        const msg = 'Enable notifications for Tinu Tracker in your device Settings to get reminders.';
+        if (Platform.OS === 'web') window.alert(msg);
+        else Alert.alert('Notifications are off', msg);
+        return; // name saved, reminders didn't — don't claim a clean save
+      }
+
       // Deliberately stays open: closing the screen on save gave no confirmation
       // that anything happened, and dropped the user somewhere they didn't ask
       // to be. The toast is the receipt; leaving is the user's call.
@@ -314,7 +305,7 @@ export default function ProfileModal({ visible, onClose, user, avatarUrl, onName
                   </TouchableOpacity>
                   <Text style={styles.sheetTitle}>Add a time</Text>
                   <TouchableOpacity
-                    onPress={() => { commitTimes([...times, toHHMM(pickerValue)]); setShowPicker(false); }}
+                    onPress={() => { draftTimes([...times, toHHMM(pickerValue)]); setShowPicker(false); }}
                     hitSlop={10}
                   >
                     <Text style={styles.sheetDone}>Add</Text>

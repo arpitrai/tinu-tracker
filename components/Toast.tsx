@@ -110,7 +110,9 @@ const styles = StyleSheet.create({
     position: 'absolute',
     left: 16,
     right: 16,
-    bottom: 96, // clears the bottom nav
+    // The bottom nav is ~72pt tall before the home indicator, so 96 left the
+    // toast hugging it and reading as part of the bar. This floats it clear.
+    bottom: 148,
     alignItems: 'center',
   },
   toast: {
