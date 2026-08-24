@@ -7,6 +7,7 @@ const Animated = { View, createAnimatedComponent };
 
 const Easing = {
   out: (fn) => fn,
+  inOut: (fn) => fn,
   cubic: (t) => t,
 };
 
@@ -30,6 +31,8 @@ module.exports = {
   useHandler: () => ({ context: {}, doDependenciesDiffer: false }),
   withTiming: (v) => v,
   withDelay: (_delay, v) => v,
+  withRepeat: (v) => v,
+  withSequence: (...values) => values[values.length - 1],
   withSpring: (v) => v,
   Easing,
 };

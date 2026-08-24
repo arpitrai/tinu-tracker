@@ -1,10 +1,11 @@
 import React, { useState, useEffect } from 'react';
-import { View, Text, ActivityIndicator, StyleSheet } from 'react-native';
+import { View, Text, StyleSheet } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import type { Session } from '@supabase/supabase-js';
 import { supabase } from './lib/supabase';
+import PulseDrawLoader from './components/PulseDrawLoader';
 import SignInScreen from './screens/SignInScreen';
 import TrackerScreen from './screens/TrackerScreen';
 import SplashScreen from './screens/SplashScreen';
@@ -72,8 +73,8 @@ export default function App() {
   // flag (not the session) to decide, so this renders as soon as the flag resolves.
   if (onboarded === null) {
     return (
-      <View style={styles.centered}>
-        <ActivityIndicator size="large" color="#7C3AED" />
+      <View style={styles.flex}>
+        <PulseDrawLoader />
         <StatusBar style="dark" />
       </View>
     );
@@ -90,8 +91,8 @@ export default function App() {
 
   if (loading) {
     return (
-      <View style={styles.centered}>
-        <ActivityIndicator size="large" color="#7C3AED" />
+      <View style={styles.flex}>
+        <PulseDrawLoader />
         <StatusBar style="dark" />
       </View>
     );
@@ -120,6 +121,7 @@ export default function App() {
 }
 
 const styles = StyleSheet.create({
+  flex: { flex: 1 },
   centered: { flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: '#F5F5FA', padding: 24 },
   errorTitle: { fontSize: 18, fontWeight: '700', color: '#dc2626', marginBottom: 12 },
   errorMsg: { fontSize: 13, color: '#333', textAlign: 'center', lineHeight: 20 },

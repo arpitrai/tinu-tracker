@@ -30,6 +30,7 @@ import type { User } from '@supabase/supabase-js';
 import TrendsChart from '../components/TrendsChart';
 import ProfileMenu from '../components/ProfileMenu';
 import ProfileModal from '../components/ProfileModal';
+import PulseDrawLoader from '../components/PulseDrawLoader';
 import SplitToggle from '../components/SplitToggle';
 import CalendarModal from '../components/CalendarModal';
 import HistoryTable from '../components/HistoryTable';
@@ -593,9 +594,7 @@ export default function TrackerScreen({ user }: Props) {
 
   if (loading) {
     return (
-      <View style={styles.loadingScreen}>
-        <ActivityIndicator size="large" color={P.primary} />
-      </View>
+      <PulseDrawLoader />
     );
   }
 
@@ -918,7 +917,6 @@ const styles = StyleSheet.create({
     paddingTop: Platform.OS === 'android' ? StatusBar.currentHeight : 0,
   },
   flex: { flex: 1 },
-  loadingScreen: { flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: P.bg },
   scroll: { padding: 16, paddingBottom: 32, gap: 12 },
 
   // Header
