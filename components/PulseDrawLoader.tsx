@@ -23,6 +23,10 @@ const AnimatedPath = Animated.createAnimatedComponent(Path);
 const AnimatedCircle = Animated.createAnimatedComponent(Circle);
 
 const DASH = 300;
+const DRAW_MS = 1150;
+const HOLD_MS = 520;
+const ERASE_MS = 760;
+const CYCLE_MS = DRAW_MS + HOLD_MS + ERASE_MS;
 const PULSE_D = 'M9 63 L25 63 L33 49 L42 65 L52 79 L63 27 L74 49 L91 19';
 
 function BrandMark({ size, color = '#FFFFFF' }: { size: number; color?: string }) {
@@ -47,8 +51,8 @@ function PulseGlyph({ size, reduceMotion }: { size: number; reduceMotion: boolea
 
     offset.value = withRepeat(
       withSequence(
-        withTiming(0, { duration: 1150, easing: Easing.out(Easing.cubic) }),
-        withDelay(520, withTiming(-DASH, { duration: 760, easing: Easing.inOut(Easing.cubic) })),
+        withTiming(0, { duration: DRAW_MS, easing: Easing.out(Easing.cubic) }),
+        withDelay(HOLD_MS, withTiming(-DASH, { duration: ERASE_MS, easing: Easing.inOut(Easing.cubic) })),
         withTiming(DASH, { duration: 0 })
       ),
       -1,
@@ -57,7 +61,8 @@ function PulseGlyph({ size, reduceMotion }: { size: number; reduceMotion: boolea
     dot.value = withRepeat(
       withSequence(
         withDelay(880, withTiming(1, { duration: 220 })),
-        withDelay(780, withTiming(0, { duration: 180 }))
+        withDelay(HOLD_MS + 50, withTiming(0, { duration: 180 })),
+        withDelay(CYCLE_MS - 880 - 220 - HOLD_MS - 50 - 180, withTiming(0, { duration: 0 }))
       ),
       -1,
       false
@@ -119,8 +124,6 @@ export default function PulseDrawLoader() {
         end={{ x: 1, y: 1 }}
         style={styles.pulseTile}
       >
-        <View style={styles.pulseDot} />
-        <View style={styles.pulseSpark} />
         <PulseGlyph size={82} reduceMotion={reduceMotion} />
       </LinearGradient>
     </View>
@@ -134,7 +137,6 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     backgroundColor: '#FFFDFB',
     paddingHorizontal: 28,
-    paddingTop: (Platform.OS === 'android' ? StatusBar.currentHeight ?? 0 : 0) + 24,
   },
   brandRow: {
     position: 'absolute',
@@ -172,23 +174,5 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.2,
     shadowRadius: 32,
     elevation: 7,
-  },
-  pulseDot: {
-    position: 'absolute',
-    top: 28,
-    right: 22,
-    width: 11,
-    height: 11,
-    borderRadius: 5.5,
-    backgroundColor: '#FFFFFF',
-  },
-  pulseSpark: {
-    position: 'absolute',
-    left: 28,
-    top: 64,
-    width: 8,
-    height: 8,
-    borderRadius: 4,
-    backgroundColor: 'rgba(255,255,255,0.45)',
   },
 });
