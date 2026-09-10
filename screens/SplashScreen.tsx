@@ -4,6 +4,7 @@ import {
   Text,
   StyleSheet,
   TouchableOpacity,
+  SafeAreaView,
   Platform,
   StatusBar,
   AccessibilityInfo,
@@ -102,52 +103,56 @@ export default function SplashScreen({ onDone }: { onDone: () => void }) {
       end={{ x: 0.45, y: 1 }}
       style={styles.root}
     >
-      <View style={styles.pad}>
-        <View style={styles.brandRow}>
-          <View style={styles.brandTile}>
-            <BrandMark size={18} />
+      <SafeAreaView style={styles.safe}>
+        <View style={styles.pad}>
+          <View style={styles.brandRow}>
+            <View style={styles.brandTile}>
+              <BrandMark size={18} />
+            </View>
+            <Text style={styles.brandName}>Tinu Tracker</Text>
           </View>
-          <Text style={styles.brandName}>Tinu Tracker</Text>
+
+          <View style={styles.spacer} />
+
+          {/* Glyph + headline + body + pills as one vertically-centered cluster. */}
+          <Animated.View style={[styles.cluster, contentStyle]}>
+            <AnimatedPulse size={108} reduceMotion={reduceMotion} />
+            <Text style={styles.title}>Watch yourself get healthier.</Text>
+            <Text style={styles.body}>Log exercise, sugar & weight. Tiny effort, real trends.</Text>
+
+            <View style={styles.chips}>
+              {FEATURES.map((f) => (
+                <View key={f} style={styles.chip}>
+                  <Text style={styles.chipText}>{f}</Text>
+                </View>
+              ))}
+            </View>
+          </Animated.View>
+
+          <View style={styles.spacer} />
+
+          <TouchableOpacity
+            testID="splash-get-started"
+            style={styles.cta}
+            activeOpacity={0.85}
+            onPress={onDone}
+            accessibilityRole="button"
+          >
+            <Text style={styles.ctaText}>Get started</Text>
+          </TouchableOpacity>
         </View>
-
-        <View style={styles.spacer} />
-
-        {/* Glyph + headline + body + pills as one vertically-centered cluster. */}
-        <Animated.View style={[styles.cluster, contentStyle]}>
-          <AnimatedPulse size={108} reduceMotion={reduceMotion} />
-          <Text style={styles.title}>Watch yourself get healthier.</Text>
-          <Text style={styles.body}>Log exercise, sugar & weight. Tiny effort, real trends.</Text>
-
-          <View style={styles.chips}>
-            {FEATURES.map((f) => (
-              <View key={f} style={styles.chip}>
-                <Text style={styles.chipText}>{f}</Text>
-              </View>
-            ))}
-          </View>
-        </Animated.View>
-
-        <View style={styles.spacer} />
-
-        <TouchableOpacity
-          testID="splash-get-started"
-          style={styles.cta}
-          activeOpacity={0.85}
-          onPress={onDone}
-          accessibilityRole="button"
-        >
-          <Text style={styles.ctaText}>Get started</Text>
-        </TouchableOpacity>
-      </View>
+      </SafeAreaView>
     </LinearGradient>
   );
 }
 
 const styles = StyleSheet.create({
   root: { flex: 1 },
+  // SafeAreaView only insets on iOS; pad past the status bar manually on Android.
+  safe: { flex: 1, paddingTop: Platform.OS === 'android' ? StatusBar.currentHeight ?? 0 : 0 },
   pad: {
     flex: 1,
-    paddingTop: (Platform.OS === 'android' ? StatusBar.currentHeight ?? 0 : 0) + 34,
+    paddingTop: 34,
     paddingHorizontal: 28,
     paddingBottom: 36,
   },
