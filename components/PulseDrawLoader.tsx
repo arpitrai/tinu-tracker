@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react';
 import {
   AccessibilityInfo,
   Platform,
+  SafeAreaView,
   StatusBar,
   StyleSheet,
   Text,
@@ -105,42 +106,53 @@ export default function PulseDrawLoader() {
   }, []);
 
   return (
-    <View style={styles.root} accessibilityRole="progressbar" accessibilityLabel="Loading Tinu Tracker">
-      <View style={styles.brandRow}>
+    <SafeAreaView
+      style={styles.safe}
+      accessibilityRole="progressbar"
+      accessibilityLabel="Loading Tinu Tracker"
+    >
+      <View style={styles.root}>
+        <View style={styles.brandRow}>
+          <LinearGradient
+            colors={['#F59E0B', '#F43F5E']}
+            start={{ x: 0, y: 0 }}
+            end={{ x: 1, y: 1 }}
+            style={styles.brandTile}
+          >
+            <BrandMark size={20} />
+          </LinearGradient>
+          <Text style={styles.brandName}>Tinu Tracker</Text>
+        </View>
+
         <LinearGradient
-          colors={['#F59E0B', '#F43F5E']}
+          colors={['#F59E0B', '#F43F5E', '#8B5CF6']}
           start={{ x: 0, y: 0 }}
           end={{ x: 1, y: 1 }}
-          style={styles.brandTile}
+          style={styles.pulseTile}
         >
-          <BrandMark size={20} />
+          <PulseGlyph size={82} reduceMotion={reduceMotion} />
         </LinearGradient>
-        <Text style={styles.brandName}>Tinu Tracker</Text>
       </View>
-
-      <LinearGradient
-        colors={['#F59E0B', '#F43F5E', '#8B5CF6']}
-        start={{ x: 0, y: 0 }}
-        end={{ x: 1, y: 1 }}
-        style={styles.pulseTile}
-      >
-        <PulseGlyph size={82} reduceMotion={reduceMotion} />
-      </LinearGradient>
-    </View>
+    </SafeAreaView>
   );
 }
 
 const styles = StyleSheet.create({
+  // SafeAreaView only insets on iOS; pad past the status bar manually on Android.
+  safe: {
+    flex: 1,
+    backgroundColor: '#FFFDFB',
+    paddingTop: Platform.OS === 'android' ? StatusBar.currentHeight ?? 0 : 0,
+  },
   root: {
     flex: 1,
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: '#FFFDFB',
     paddingHorizontal: 28,
   },
   brandRow: {
     position: 'absolute',
-    top: (Platform.OS === 'android' ? StatusBar.currentHeight ?? 0 : 0) + 24,
+    top: 24,
     left: 28,
     flexDirection: 'row',
     alignItems: 'center',
