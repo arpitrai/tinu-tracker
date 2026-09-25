@@ -193,8 +193,8 @@ export default function SignInScreen() {
       if (error) throw error;
 
       const result = await WebBrowser.openAuthSessionAsync(data.url!, redirectTo);
-      // Dismissing the browser is a choice, not a failure — same as backing out
-      // of the Apple sheet above, so it stays silent.
+      // Dismissing the browser is a choice, not a failure. Backing out of the
+      // Apple sheet above is treated the same way, so this stays silent.
       if (result.type === 'success') {
         const url = result.url;
         const params = new URL(url);

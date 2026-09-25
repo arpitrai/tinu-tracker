@@ -88,12 +88,12 @@
 </main>
 
 <footer>
-  &copy; 2026 Tinu Tracker &mdash; Arpit Rai
+  &copy; 2026 Tinu Tracker &middot; Arpit Rai
 </footer>
 
 <script>
   // Supabase lands here only when it could not honour the app's own redirect
-  // (tinutracker://) — a sign-in whose state expired or was already used. It
+  // (tinutracker://): a sign-in whose state expired or was already used. It
   // reports the reason in the fragment on the implicit flow and in the query
   // string on PKCE, so read both.
   (function () {
@@ -115,8 +115,8 @@
       });
     }
 
-    // Everyone who reaches this page was redirected here mid-sign-in — nobody
-    // types the URL — so assume a failed hand-off even when Supabase sends no
+    // Everyone who reaches this page was redirected here mid-sign-in (nobody
+    // types the URL), so assume a failed hand-off even when Supabase sends no
     // reason at all. Tokens in the URL are no better: they reached the browser
     // and not the app, so the sign-in still has to be done again.
     var error = pick('error') || pick('error_code');
@@ -126,7 +126,7 @@
       description || (error
         ? 'Your sign-in could not be completed.'
         : 'Your sign-in didn’t make it back to the app.'),
-      'Reopen Tinu Tracker and sign in again — a fresh attempt almost always works. This tends to happen when the Google screens take a few minutes, or when the sign-in page is reopened after going back.',
+      'Reopen Tinu Tracker and sign in again. A fresh attempt almost always works. This tends to happen when the Google screens take a few minutes, or when the sign-in page is reopened after going back.',
     ]);
 
     var raw = (window.location.hash || '') + (window.location.search || '');
