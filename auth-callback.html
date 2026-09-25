@@ -115,24 +115,19 @@
       });
     }
 
+    // Everyone who reaches this page was redirected here mid-sign-in — nobody
+    // types the URL — so assume a failed hand-off even when Supabase sends no
+    // reason at all. Tokens in the URL are no better: they reached the browser
+    // and not the app, so the sign-in still has to be done again.
     var error = pick('error') || pick('error_code');
     var description = pick('error_description');
-    var signedIn = hash.get('access_token') || query.get('code');
 
-    if (error) {
-      say('Sign-in didn’t finish', [
-        description || 'Your sign-in expired before it could complete.',
-        'This usually happens when the Google screens take a few minutes, or when the sign-in page is reopened after going back. Starting over almost always works.',
-      ]);
-    } else if (signedIn) {
-      say('You’re signed in', [
-        'Head back to the app to carry on.',
-      ]);
-    } else {
-      say('Nothing to do here', [
-        'This page is where Tinu Tracker sends you if a sign-in cannot be completed. Open the app to sign in.',
-      ]);
-    }
+    say('Sign-in didn’t finish', [
+      description || (error
+        ? 'Your sign-in could not be completed.'
+        : 'Your sign-in didn’t make it back to the app.'),
+      'Reopen Tinu Tracker and sign in again — a fresh attempt almost always works. This tends to happen when the Google screens take a few minutes, or when the sign-in page is reopened after going back.',
+    ]);
 
     var raw = (window.location.hash || '') + (window.location.search || '');
     if (raw) {
