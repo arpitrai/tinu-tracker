@@ -3,7 +3,7 @@
     "name": "Tinu Tracker",
     "slug": "tinu-tracker",
     "scheme": "tinutracker",
-    "version": "1.0.1",
+    "version": "1.0.2",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "light",
@@ -45,6 +45,12 @@
       "eas": {
         "projectId": "af77cb6c-63e3-4b2a-9443-59059ab4a7df"
       }
+    },
+    "runtimeVersion": {
+      "policy": "fingerprint"
+    },
+    "updates": {
+      "url": "https://u.expo.dev/af77cb6c-63e3-4b2a-9443-59059ab4a7df"
     }
   }
 }
