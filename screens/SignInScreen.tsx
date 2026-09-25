@@ -193,6 +193,8 @@ export default function SignInScreen() {
       if (error) throw error;
 
       const result = await WebBrowser.openAuthSessionAsync(data.url!, redirectTo);
+      // Dismissing the browser is a choice, not a failure — same as backing out
+      // of the Apple sheet above, so it stays silent.
       if (result.type === 'success') {
         const url = result.url;
         const params = new URL(url);
@@ -203,7 +205,20 @@ export default function SignInScreen() {
           await supabase.auth.setSession({ access_token: accessToken, refresh_token: refreshToken });
         } else {
           const code = params.searchParams.get('code');
-          if (code) await supabase.auth.exchangeCodeForSession(url);
+          if (code) {
+            await supabase.auth.exchangeCodeForSession(url);
+          } else {
+            // Supabase reports a refused sign-in in the fragment on the implicit
+            // flow and in the query string on PKCE. Without this the redirect
+            // came back carrying neither tokens nor a reason, which used to fall
+            // through silently and leave the button looking like it did nothing.
+            const reason =
+              hashParams.get('error_description') ??
+              params.searchParams.get('error_description') ??
+              hashParams.get('error') ??
+              params.searchParams.get('error');
+            throw new Error(reason ?? 'Sign in did not complete. Please try again.');
+          }
         }
       }
     } catch (e: any) {

@@ -1,0 +1,146 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Sign-in – Tinu Tracker</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      background: #f8fafc;
+      color: #1e293b;
+      line-height: 1.7;
+    }
+    header {
+      background: linear-gradient(135deg, #1565C0, #42A5F5);
+      color: #fff;
+      padding: 48px 24px 40px;
+      text-align: center;
+    }
+    header h1 { font-size: 2rem; font-weight: 700; letter-spacing: -0.5px; }
+    header p  { margin-top: 8px; opacity: 0.85; font-size: 0.95rem; }
+    main {
+      max-width: 720px;
+      margin: 40px auto;
+      padding: 0 24px 64px;
+    }
+    h2 {
+      font-size: 1.15rem;
+      font-weight: 600;
+      color: #1565C0;
+      margin-bottom: 10px;
+    }
+    p, li { font-size: 0.97rem; color: #334155; }
+    #body p + p { margin-top: 12px; }
+    a { color: #1565C0; }
+    .cta {
+      display: inline-block;
+      margin-top: 20px;
+      background: #1565C0;
+      color: #fff;
+      font-weight: 600;
+      font-size: 0.97rem;
+      text-decoration: none;
+      padding: 12px 22px;
+      border-radius: 10px;
+    }
+    details {
+      margin-top: 32px;
+      font-size: 0.85rem;
+      color: #64748b;
+    }
+    details summary { cursor: pointer; }
+    details pre {
+      margin-top: 8px;
+      padding: 12px;
+      background: #eef2f7;
+      border-radius: 8px;
+      font-size: 0.8rem;
+      white-space: pre-wrap;
+      word-break: break-word;
+      color: #475569;
+    }
+    footer {
+      text-align: center;
+      padding: 24px;
+      font-size: 0.8rem;
+      color: #94a3b8;
+    }
+  </style>
+</head>
+<body>
+
+<header>
+  <h1>Tinu Tracker</h1>
+  <p>Sign-in</p>
+</header>
+
+<main>
+  <h2 id="title">Checking your sign-in&hellip;</h2>
+  <div id="body"></div>
+  <a class="cta" href="tinutracker://">Reopen Tinu Tracker</a>
+
+  <details id="details" hidden>
+    <summary>Technical details</summary>
+    <pre id="raw"></pre>
+  </details>
+</main>
+
+<footer>
+  &copy; 2026 Tinu Tracker &mdash; Arpit Rai
+</footer>
+
+<script>
+  // Supabase lands here only when it could not honour the app's own redirect
+  // (tinutracker://) — a sign-in whose state expired or was already used. It
+  // reports the reason in the fragment on the implicit flow and in the query
+  // string on PKCE, so read both.
+  (function () {
+    var hash = new URLSearchParams(window.location.hash.replace(/^#/, ''));
+    var query = new URLSearchParams(window.location.search);
+    function pick(name) { return hash.get(name) || query.get(name); }
+
+    var title = document.getElementById('title');
+    var body = document.getElementById('body');
+
+    // Every string below comes from the URL, so it is written with textContent
+    // and never interpolated into markup.
+    function say(heading, paragraphs) {
+      title.textContent = heading;
+      paragraphs.forEach(function (text) {
+        var p = document.createElement('p');
+        p.textContent = text;
+        body.appendChild(p);
+      });
+    }
+
+    var error = pick('error') || pick('error_code');
+    var description = pick('error_description');
+    var signedIn = hash.get('access_token') || query.get('code');
+
+    if (error) {
+      say('Sign-in didn’t finish', [
+        description || 'Your sign-in expired before it could complete.',
+        'This usually happens when the Google screens take a few minutes, or when the sign-in page is reopened after going back. Starting over almost always works.',
+      ]);
+    } else if (signedIn) {
+      say('You’re signed in', [
+        'Head back to the app to carry on.',
+      ]);
+    } else {
+      say('Nothing to do here', [
+        'This page is where Tinu Tracker sends you if a sign-in cannot be completed. Open the app to sign in.',
+      ]);
+    }
+
+    var raw = (window.location.hash || '') + (window.location.search || '');
+    if (raw) {
+      document.getElementById('raw').textContent = raw;
+      document.getElementById('details').hidden = false;
+    }
+  })();
+</script>
+
+</body>
+</html>
