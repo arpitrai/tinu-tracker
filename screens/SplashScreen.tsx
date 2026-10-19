@@ -11,6 +11,7 @@ import {
 } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import Svg, { Path, Circle } from 'react-native-svg';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import Animated, {
   useSharedValue,
   useAnimatedProps,
@@ -74,6 +75,9 @@ function BrandMark({ size }: { size: number }) {
 const FEATURES = ['Exercise', 'Sugar', 'Weight'];
 
 export default function SplashScreen({ onDone }: { onDone: () => void }) {
+  // Edge-to-edge on Android 15+: keep the CTA clear of the system nav bar (iOS: SafeAreaView).
+  const insets = useSafeAreaInsets();
+  const bottomInset = Platform.OS === 'android' ? insets.bottom : 0;
   const [reduceMotion, setReduceMotion] = React.useState(false);
   const content = useSharedValue(0);
 
@@ -103,7 +107,7 @@ export default function SplashScreen({ onDone }: { onDone: () => void }) {
       end={{ x: 0.45, y: 1 }}
       style={styles.root}
     >
-      <SafeAreaView style={styles.safe}>
+      <SafeAreaView style={[styles.safe, { paddingBottom: bottomInset }]}>
         <View style={styles.pad}>
           <View style={styles.brandRow}>
             <View style={styles.brandTile}>

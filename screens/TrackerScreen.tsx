@@ -37,6 +37,7 @@ import HistoryTable from '../components/HistoryTable';
 import Toast, { type ToastKind, type ToastState } from '../components/Toast';
 import UnsavedChangesModal from '../components/UnsavedChangesModal';
 import Svg, { Path, Rect } from 'react-native-svg';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 // Solid glyphs rather than hairline strokes: at 24px in a busy screen the
 // silhouette is what reads, and the old 2px outlines receded behind their own
@@ -165,6 +166,10 @@ export default function TrackerScreen({ user }: Props) {
 
   // Bottom-nav sliding accent bar (concept: Top Accent Slide)
   const [navWidth, setNavWidth] = useState(0);
+  // Android 15+ draws edge-to-edge, so the system nav bar overlaps the tab bar unless we
+  // pad past it. iOS is already inset by SafeAreaView, so only Android adds this.
+  const insets = useSafeAreaInsets();
+  const bottomInset = Platform.OS === 'android' ? insets.bottom : 0;
   const navIndicator = useRef(new Animated.Value(0)).current; // 0 = Daily Log, 1 = Trend
   useEffect(() => {
     Animated.timing(navIndicator, {
@@ -869,7 +874,7 @@ export default function TrackerScreen({ user }: Props) {
       <Toast toast={toast} onDismiss={() => setToast(null)} />
 
       {/* ── Bottom navigation (Top Accent Slide) ── */}
-      <View style={styles.bottomNav} onLayout={e => setNavWidth(e.nativeEvent.layout.width)}>
+      <View style={[styles.bottomNav, { paddingBottom: 16 + bottomInset }]} onLayout={e => setNavWidth(e.nativeEvent.layout.width)}>
         {navWidth > 0 && (
           <Animated.View style={[styles.navAccent, { transform: [{ translateX: accentTranslate }] }]}>
             <LinearGradient

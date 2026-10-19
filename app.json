@@ -31,6 +31,12 @@
     "plugins": [
       "expo-apple-authentication",
       "expo-web-browser",
+      [
+        "expo-status-bar",
+        {
+          "style": "dark"
+        }
+      ],
       "expo-secure-store",
       [
         "expo-notifications",

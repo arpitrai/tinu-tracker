@@ -14,6 +14,7 @@ import {
 } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import Svg, { Path, Circle } from 'react-native-svg';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import * as WebBrowser from 'expo-web-browser';
 import * as AuthSession from 'expo-auth-session';
 import * as AppleAuthentication from 'expo-apple-authentication';
@@ -88,6 +89,9 @@ function cellColor(col: number, level: number, cols: number): string {
 /* ── Screen ── */
 
 export default function SignInScreen() {
+  // Edge-to-edge on Android 15+: keep the footer clear of the system nav bar (iOS: SafeAreaView).
+  const insets = useSafeAreaInsets();
+  const bottomInset = Platform.OS === 'android' ? insets.bottom : 0;
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   // Hidden email/password path — primarily so app-store reviewers can sign in
@@ -230,7 +234,7 @@ export default function SignInScreen() {
 
   return (
     <LinearGradient colors={['#FFF5EC', '#FFFDFB']} start={{ x: 0, y: 0 }} end={{ x: 0, y: 0.55 }} style={styles.root}>
-      <SafeAreaView style={styles.safe}>
+      <SafeAreaView style={[styles.safe, { paddingBottom: bottomInset }]}>
         <KeyboardAvoidingView
           style={styles.flex}
           behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
