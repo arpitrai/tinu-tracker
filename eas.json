@@ -33,6 +33,13 @@
         "track": "internal",
         "releaseStatus": "completed"
       }
+    },
+    "closed": {
+      "android": {
+        "serviceAccountKeyPath": "./google-service-account.json",
+        "track": "Running today",
+        "releaseStatus": "completed"
+      }
     }
   }
 }
