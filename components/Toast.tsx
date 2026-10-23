@@ -1,22 +1,31 @@
 import React, { useEffect, useRef } from 'react';
-import { Animated, Easing, Platform, StyleSheet, Text, View } from 'react-native';
+import { Animated, Easing, Platform, Pressable, StyleSheet, Text, useWindowDimensions, View } from 'react-native';
 
-export type ToastKind = 'success' | 'error';
+export type ToastKind = 'success' | 'error' | 'info';
 
 export interface ToastState {
   /** Bumped on every show so re-raising the same message re-triggers the animation. */
   id: number;
   kind: ToastKind;
   message: string;
+  /** Optional button on the toast, e.g. Retry after a failed save. */
+  action?: { label: string; onPress: () => void };
+  /** Stays until tapped or replaced instead of fading. */
+  sticky?: boolean;
 }
 
-const C = {
-  successBg: '#065F46',
-  successFg: '#ECFDF5',
-  errorBg: '#991B1B',
-  errorFg: '#FEF2F2',
+// 'info' is for explanations (why a control can't be used yet), which are
+// neither a success nor a failure.
+const C: Record<ToastKind, { bg: string; fg: string; icon: string }> = {
+  success: { bg: '#065F46', fg: '#ECFDF5', icon: '✓' },
+  error: { bg: '#991B1B', fg: '#FEF2F2', icon: '!' },
+  info: { bg: '#2E2A26', fg: '#F7F3EE', icon: 'i' },
 };
 
+// Toasts fade on their own. Sticky ones (a save or reset that failed to reach
+// the server) stay until tapped or replaced: a failure that vanished while the
+// user was looking away was indistinguishable from success. Hints like "log
+// something first" are not sticky; left up, they cover the history below.
 const VISIBLE_MS = 2600;
 const FADE_MS = 180;
 
@@ -34,6 +43,7 @@ interface Props {
  */
 export default function Toast({ toast, onDismiss }: Props) {
   const anim = useRef(new Animated.Value(0)).current;
+  const { width } = useWindowDimensions();
 
   // Keep the latest callback without making it an effect dependency, so a new
   // parent render doesn't restart the dismiss timer mid-toast.
@@ -41,6 +51,22 @@ export default function Toast({ toast, onDismiss }: Props) {
   onDismissRef.current = onDismiss;
 
   const toastId = toast?.id;
+  const persistent = !!toast?.sticky;
+  const idRef = useRef(toastId);
+  idRef.current = toastId;
+
+  // A newer toast may have replaced this one mid-fade; only dismiss our own.
+  const fadeOut = () => {
+    const id = idRef.current;
+    Animated.timing(anim, {
+      toValue: 0,
+      duration: FADE_MS,
+      easing: Easing.in(Easing.cubic),
+      useNativeDriver: USE_NATIVE,
+    }).start(() => {
+      if (idRef.current === id) onDismissRef.current();
+    });
+  };
 
   useEffect(() => {
     if (toastId == null) return;
@@ -52,6 +78,8 @@ export default function Toast({ toast, onDismiss }: Props) {
       easing: Easing.out(Easing.cubic),
       useNativeDriver: USE_NATIVE,
     }).start();
+
+    if (persistent) return;
 
     let cancelled = false;
     const timer = setTimeout(() => {
@@ -69,15 +97,17 @@ export default function Toast({ toast, onDismiss }: Props) {
       cancelled = true;
       clearTimeout(timer);
     };
-  }, [toastId, anim]);
+  }, [toastId, persistent, anim]);
 
   if (!toast) return null;
 
-  const isError = toast.kind === 'error';
+  const pal = C[toast.kind];
 
   return (
     <Animated.View
-      pointerEvents="none"
+      // Only the toast itself takes touches; the empty strip either side of it
+      // must not swallow taps meant for the screen underneath.
+      pointerEvents="box-none"
       testID="toast"
       style={[
         styles.wrap,
@@ -89,18 +119,37 @@ export default function Toast({ toast, onDismiss }: Props) {
         },
       ]}
     >
-      <View style={[styles.toast, { backgroundColor: isError ? C.errorBg : C.successBg }]}>
-        <Text style={[styles.icon, { color: isError ? C.errorFg : C.successFg }]}>
-          {isError ? '!' : '✓'}
+      <Pressable
+        onPress={fadeOut}
+        // Capped to the screen as well as 420: centred content is sized to fit, so a
+        // long error would otherwise run past the side margins.
+        style={[styles.toast, { backgroundColor: pal.bg, maxWidth: Math.min(420, width - 32) }]}
+      >
+        <Text style={[styles.icon, { color: pal.fg }]}>
+          {pal.icon}
         </Text>
         <Text
           testID="toast-message"
-          style={[styles.msg, { color: isError ? C.errorFg : C.successFg }]}
+          style={[styles.msg, { color: pal.fg }]}
           numberOfLines={3}
         >
           {toast.message}
         </Text>
-      </View>
+        {toast.action && (
+          <Pressable
+            testID="toast-action"
+            onPress={() => { const run = toast.action!.onPress; fadeOut(); run(); }}
+            hitSlop={8}
+          >
+            <Text style={[styles.action, { color: pal.fg }]}>
+              {toast.action.label}
+            </Text>
+          </Pressable>
+        )}
+        {persistent && !toast.action && (
+          <Text style={[styles.icon, { color: pal.fg }]}>✕</Text>
+        )}
+      </Pressable>
     </Animated.View>
   );
 }
@@ -119,7 +168,6 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 10,
-    maxWidth: 420,
     paddingVertical: 12,
     paddingHorizontal: 16,
     borderRadius: 14,
@@ -139,5 +187,11 @@ const styles = StyleSheet.create({
     fontSize: 14,
     fontWeight: '600',
     lineHeight: 19,
+  },
+  action: {
+    fontSize: 14,
+    fontWeight: '800',
+    lineHeight: 19,
+    textDecorationLine: 'underline',
   },
 });

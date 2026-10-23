@@ -11,6 +11,7 @@ import { Circle, Line as SkiaLine, LinearGradient, useFont, vec } from '@shopify
 import { useAnimatedReaction, runOnJS } from 'react-native-reanimated';
 import HistoryTable, { HistoryEntry } from './HistoryTable';
 import DateRangeModal from './DateRangeModal';
+import { needsYear } from '../lib/dates';
 
 /* ─────────────────────────────────────────
    COLOURS
@@ -92,13 +93,23 @@ function mondayOfWeek(dateStr: string): string {
   return `${dt.getFullYear()}-${pad(dt.getMonth() + 1)}-${pad(dt.getDate())}`;
 }
 
-function fmtPretty(dateStr: string): string {
+function fmtPretty(dateStr: string, today: string): string {
   const [y, m, d] = dateStr.split('-').map(Number);
-  return `${d} ${MON[m - 1]}`;
+  return needsYear(dateStr, today) ? `${d} ${MON[m - 1]} ${y}` : `${d} ${MON[m - 1]}`;
 }
 
 function numAvg(nums: number[]): number | null {
   return nums.length ? nums.reduce((a, b) => a + b, 0) / nums.length : null;
+}
+
+// Y-axis bounds for the weight chart. Padding scales with the data so a real
+// 1-3 kg change reads as a slope, with a 2 kg floor so a near-flat month (or a
+// single reading) isn't stretched into a dramatic-looking line.
+export function weightDomain(weights: number[]): [number, number] {
+  const lo = Math.min(...weights);
+  const hi = Math.max(...weights);
+  const pad = Math.max((hi - lo) * 0.4, 2);
+  return [lo - pad, hi + pad];
 }
 
 /* ─────────────────────────────────────────
@@ -235,15 +246,10 @@ function WeightChart({ points, svgW }: { points: Point[]; svgW: number }) {
   // Up to 6 evenly-spaced x ticks — victory keeps them from overlapping.
   const tickCount = Math.max(2, Math.min(6, n));
 
-  // Fixed y-axis headroom: 10 kg below the lowest logged weight and 10 kg above
-  // the highest, instead of fitting tightly to the data range.
   const validWeights = points
     .map(p => p.weight)
     .filter((w): w is number => w !== null);
-  const yDomain: [number, number] = [
-    Math.min(...validWeights) - 10,
-    Math.max(...validWeights) + 10,
-  ];
+  const yDomain = weightDomain(validWeights);
 
   const readoutIdx =
     activeIdx != null && points[activeIdx]?.weight != null ? activeIdx : lastReadingIdx(points);
@@ -362,9 +368,11 @@ interface Props {
   entries: ChartEntry[];
   today: string;
   onJumpToDate: (date: string) => void;
+  /** Short explanations, e.g. why Weekly can't be picked yet. Shown as a toast. */
+  onNotice?: (message: string) => void;
 }
 
-export default function TrendsChart({ entries, today, onJumpToDate }: Props) {
+export default function TrendsChart({ entries, today, onJumpToDate, onNotice }: Props) {
   const { width } = useWindowDimensions();
   const svgW = width - 32;
 
@@ -446,8 +454,8 @@ export default function TrendsChart({ entries, today, onJumpToDate }: Props) {
   // period is still on screen once the selector has scrolled away.
   const periodTitle = preset === 'CUSTOM' ? 'Custom range' : `Last ${PRESET_DAYS[preset]} days`;
   const periodDates = preset === 'CUSTOM'
-    ? `${fmtPretty(startDate)} – ${fmtPretty(endDate)} · ${totalDays} days`
-    : `${fmtPretty(startDate)} – ${fmtPretty(endDate)}`;
+    ? `${fmtPretty(startDate, today)} – ${fmtPretty(endDate, today)} · ${totalDays} days`
+    : `${fmtPretty(startDate, today)} – ${fmtPretty(endDate, today)}`;
   // Short form for the echoes, where it trails other words.
   const periodPhrase = preset === 'CUSTOM' ? `${totalDays} days` : `last ${PRESET_DAYS[preset]} days`;
 
@@ -506,15 +514,20 @@ export default function TrendsChart({ entries, today, onJumpToDate }: Props) {
             <Text style={s.sectionSub}>kg · {periodPhrase}</Text>
           </View>
           <View style={s.granRow}>
-            {GRAN.map(({ key, label }) => {
+            {GRAN.map(({ key, label, minDays }) => {
               const on = gran === key;
               const enabled = granEnabled(key);
               return (
                 <TouchableOpacity
                   key={key}
                   style={[s.granBtn, on && s.granBtnOn, !enabled && s.granBtnOff]}
-                  onPress={() => enabled && setGran(key)}
-                  disabled={!enabled}
+                  // Not disabled: a dead button reads as broken, so a tap on
+                  // one that needs a longer period says what it needs.
+                  onPress={() =>
+                    enabled
+                      ? setGran(key)
+                      : onNotice?.(`${label} needs a period of at least ${minDays} days.`)
+                  }
                   activeOpacity={0.75}
                 >
                   <Text style={[s.granTxt, on && s.granTxtOn, !enabled && s.granTxtOff]}>{label}</Text>

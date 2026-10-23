@@ -181,9 +181,8 @@ export default function ProfileModal({ visible, onClose, user, avatarUrl, onName
               end={{ x: 0.9, y: 1 }}
               style={styles.hero}
             >
-              {/* "Close", not "Cancel": reminders apply instantly and the name
-                  now saves in place, so this dismisses the screen rather than
-                  undoing anything. */}
+              {/* Nothing on this screen is written until "Save changes", so Close
+                  simply leaves; any unsaved name or reminder edit is dropped. */}
               <TouchableOpacity onPress={onClose} disabled={busy} hitSlop={12} style={styles.cancelBtn}>
                 <Text style={styles.cancelText}>Close</Text>
               </TouchableOpacity>

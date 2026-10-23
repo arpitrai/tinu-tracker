@@ -7,6 +7,11 @@ interface Props {
   onChange: (v: boolean | null) => void;
   yesColor: string;
   noColor: string;
+  /**
+   * Shows the saved state. A locked chip is still tappable: the tap is passed to
+   * onChange as a plain selection (never a deselect), so the parent can unlock
+   * the day and apply it in one go instead of Edit, then change, then Save.
+   */
   locked?: boolean;
 }
 
@@ -41,21 +46,33 @@ function SplitToggle({ value, onChange, yesColor, noColor, locked }: Props) {
     const color = target ? yesColor : noColor;
 
     if (locked) {
+      const unlock = () => onChange(target);
+      const testID = `split-${label.toLowerCase()}-locked`;
       if (selected) {
         const soft = SOFT[color] ?? { bg: '#F2F1EE', text: color };
         return (
-          <View style={[styles.opt, { backgroundColor: soft.bg }]}>
+          <TouchableOpacity
+            testID={testID}
+            style={[styles.opt, { backgroundColor: soft.bg }]}
+            onPress={unlock}
+            activeOpacity={0.8}
+          >
             <View style={styles.lockRow}>
               <Text style={[styles.optText, { color: soft.text }]}>{label}</Text>
               <LockIcon size={14} color={soft.text} />
             </View>
-          </View>
+          </TouchableOpacity>
         );
       }
       return (
-        <View style={[styles.opt, styles.optIdle, styles.optFaded]}>
+        <TouchableOpacity
+          testID={testID}
+          style={[styles.opt, styles.optIdle, styles.optFaded]}
+          onPress={unlock}
+          activeOpacity={0.8}
+        >
           <Text style={[styles.optText, styles.optTextIdle]}>{label}</Text>
-        </View>
+        </TouchableOpacity>
       );
     }
 

@@ -26,6 +26,7 @@ import { supabase } from '../lib/supabase';
 import { setLoggedDates, syncDailyReminders } from '../lib/notifications';
 import { validateWeight } from '../lib/weight';
 import { friendlyWriteError } from '../lib/errors';
+import { needsYear } from '../lib/dates';
 import type { User } from '@supabase/supabase-js';
 import TrendsChart from '../components/TrendsChart';
 import ProfileMenu from '../components/ProfileMenu';
@@ -146,13 +147,13 @@ function getAvatarUrl(user: User): string | null {
   ) ?? null;
 }
 
-// "Thu, 25 Jun"
+// "Thu, 25 Jun", or "Thu, 25 Jun 2025" once it's more than a year back.
 function formatDatePretty(dateStr: string): string {
   const [y, m, d] = dateStr.split('-').map(Number);
   const dt = new Date(y, m - 1, d);
   const wd = dt.toLocaleDateString('en-US', { weekday: 'short' });
   const mon = dt.toLocaleDateString('en-US', { month: 'short' });
-  return `${wd}, ${d} ${mon}`;
+  return needsYear(dateStr) ? `${wd}, ${d} ${mon} ${y}` : `${wd}, ${d} ${mon}`;
 }
 
 interface Props { user: User; }
@@ -203,9 +204,13 @@ export default function TrackerScreen({ user }: Props) {
 
   const [toast, setToast] = useState<ToastState | null>(null);
   const toastSeq = useRef(0);
-  const showToast = useCallback((kind: ToastKind, message: string) => {
+  const showToast = useCallback((
+    kind: ToastKind,
+    message: string,
+    opts?: Pick<ToastState, 'action' | 'sticky'>,
+  ) => {
     toastSeq.current += 1;
-    setToast({ id: toastSeq.current, kind, message });
+    setToast({ id: toastSeq.current, kind, message, ...opts });
   }, []);
 
   const [menuVisible, setMenuVisible] = useState(false);
@@ -245,14 +250,20 @@ export default function TrackerScreen({ user }: Props) {
   const pendingNav = useRef<(() => void) | null>(null);
   const [guardVisible, setGuardVisible] = useState(false);
 
+  // A failed load must never render as an empty account: that reads as lost
+  // data, and the blank form would invite logging over days that do exist.
+  const [loadError, setLoadError] = useState(false);
+
   const loadData = useCallback(async () => {
     setLoading(true);
     const { data, error } = await supabase
       .from('entries')
       .select('*')
       .eq('user_id', user.id)
-      .order('date', { ascending: false });
+      .order('date', { ascending: false })
+      .then((res) => res, () => ({ data: null, error: true }));
 
+    setLoadError(!!error || !data);
     if (!error && data) {
       const map = new Map<string, DayEntry>();
       for (const e of data) map.set(e.date, e);
@@ -292,6 +303,7 @@ export default function TrackerScreen({ user }: Props) {
 
   const navigateToDate = useCallback((newDate: string) => {
     setSelectedDate(newDate);
+    setToast(null); // an error about the previous day doesn't belong on this one
     const entry = allEntries.get(newDate);
     if (entry) {
       setExercised(entry.exercised);
@@ -439,6 +451,10 @@ export default function TrackerScreen({ user }: Props) {
     setWeightError(false);
   }
 
+  // A tap on a saved day's control opens the day for editing and applies the
+  // tap in one go. The unsaved-changes prompt still guards leaving the day.
+  const unlockIfSaved = () => { if (readOnly) setIsEditing(true); };
+
   // Shown whenever there is a value, or the user has deliberately opened it.
   const showWeightEditor = weight !== '' || weightActive;
 
@@ -493,7 +509,10 @@ export default function TrackerScreen({ user }: Props) {
       if (error.code === '22P02' || error.code === '22003' || /weight/i.test(error.message ?? '')) {
         setWeightError(true);
       }
-      showToast('error', friendlyWriteError(error, 'save'));
+      showToast('error', friendlyWriteError(error, 'save'), {
+        sticky: true,
+        action: { label: 'Retry', onPress: () => { handleSaveRef.current(); } },
+      });
       return false;
     }
 
@@ -512,6 +531,11 @@ export default function TrackerScreen({ user }: Props) {
     return true;
   };
 
+  // Retry lives on a toast that outlives the render that raised it, so it calls
+  // through a ref to get the current form rather than a stale snapshot.
+  const handleSaveRef = useRef(handleSave);
+  handleSaveRef.current = handleSave;
+
   // "Save" inside the prompt. A failed write keeps the user on the day so they
   // can see the error toast (which the modal would otherwise cover) and retry.
   const handleGuardSave = async () => {
@@ -529,7 +553,7 @@ export default function TrackerScreen({ user }: Props) {
     setSaving(false);
 
     if (error) {
-      showToast('error', friendlyWriteError(error, 'reset'));
+      showToast('error', friendlyWriteError(error, 'reset'), { sticky: true });
       return;
     }
 
@@ -565,6 +589,27 @@ export default function TrackerScreen({ user }: Props) {
       { text: 'Cancel', style: 'cancel' },
       { text: 'Reset', style: 'destructive', onPress: performReset },
     ]);
+  };
+
+  // Log Out sits right under Profile in the menu, and getting back in is a full
+  // OAuth round trip, so a slightly low tap shouldn't be enough to sign out.
+  const confirmSignOut = () => {
+    const title = 'Log out?';
+    const message = "You'll need to sign in again to see your entries.";
+    if (Platform.OS === 'web') {
+      if (typeof window !== 'undefined' && window.confirm(`${title}\n\n${message}`)) {
+        supabase.auth.signOut();
+      }
+      return;
+    }
+    // The menu's modal is still fading out when this runs, and iOS drops an
+    // alert presented over a view controller that is mid-dismiss.
+    setTimeout(() => {
+      Alert.alert(title, message, [
+        { text: 'Cancel', style: 'cancel' },
+        { text: 'Log out', style: 'destructive', onPress: () => { supabase.auth.signOut(); } },
+      ]);
+    }, Platform.OS === 'ios' ? 350 : 0);
   };
 
   const chartEntries = useMemo(() => Array.from(allEntries.values()), [allEntries]);
@@ -621,7 +666,7 @@ export default function TrackerScreen({ user }: Props) {
         visible={menuVisible}
         onClose={() => setMenuVisible(false)}
         onProfile={() => setProfileVisible(true)}
-        onSignOut={() => guardedNav(() => { supabase.auth.signOut(); })}
+        onSignOut={() => guardedNav(confirmSignOut)}
       />
       <ProfileModal
         visible={profileVisible}
@@ -653,7 +698,21 @@ export default function TrackerScreen({ user }: Props) {
         <GestureDetector gesture={swipeTabs}>
         <ScrollView contentContainerStyle={styles.scroll} keyboardShouldPersistTaps="handled">
 
-          {activeTab === 'entries' ? (
+          {loadError ? (
+            // Replaces both tabs: neither an empty log nor an empty chart is true.
+            <View style={styles.loadError} testID="load-error">
+              <Text style={styles.loadErrorTitle}>Couldn't load your entries</Text>
+              <Text style={styles.loadErrorBody}>
+                Your data is safe. Check your connection and try again.
+              </Text>
+              <Pressable
+                style={({ pressed }) => [styles.saveBtn, styles.loadErrorBtn, pressed && styles.disabled]}
+                onPress={loadData}
+              >
+                <Text style={styles.saveBtnText}>Try again</Text>
+              </Pressable>
+            </View>
+          ) : activeTab === 'entries' ? (
             <>
               {/* ── Date row (own row, back/forth arrows) ── */}
               <View style={styles.dateRow}>
@@ -688,6 +747,18 @@ export default function TrackerScreen({ user }: Props) {
                     );
                   })()}
                 </TouchableOpacity>
+                {/* One tap home from any past day. Absolutely placed beside the ›
+                    arrow so showing it never moves the date or changes the row height. */}
+                {!isToday && (
+                  <Pressable
+                    testID="go-today"
+                    style={({ pressed }) => [styles.todayPill, pressed && styles.editBtnPressed]}
+                    onPress={() => guardedNav(() => navigateToDate(today))}
+                    hitSlop={6}
+                  >
+                    <Text style={styles.todayPillText}>Today</Text>
+                  </Pressable>
+                )}
                 <TouchableOpacity
                   style={[styles.dateNav, isToday && styles.dateNavOff]}
                   onPress={goRight}
@@ -708,7 +779,7 @@ export default function TrackerScreen({ user }: Props) {
                   </View>
                   <SplitToggle
                     value={exercised}
-                    onChange={setExercised}
+                    onChange={(v) => { unlockIfSaved(); setExercised(v); }}
                     yesColor={P.green}
                     noColor={P.red}
                     locked={readOnly}
@@ -723,7 +794,7 @@ export default function TrackerScreen({ user }: Props) {
                   </View>
                   <SplitToggle
                     value={ateSweets}
-                    onChange={setAteSweets}
+                    onChange={(v) => { unlockIfSaved(); setAteSweets(v); }}
                     yesColor={P.red}
                     noColor={P.green}
                     locked={readOnly}
@@ -743,7 +814,12 @@ export default function TrackerScreen({ user }: Props) {
                     )}
                   </View>
                   {readOnly ? (
-                    <View style={[styles.wtBox, styles.wtBoxLocked]}>
+                    // Tapping the saved weight opens the day for editing, like the toggles.
+                    <Pressable
+                      testID="weight-locked"
+                      style={[styles.wtBox, styles.wtBoxLocked]}
+                      onPress={() => setIsEditing(true)}
+                    >
                       <View style={styles.wtSpacer} />
                       <View style={styles.wtVal}>
                         {weight ? (
@@ -756,7 +832,7 @@ export default function TrackerScreen({ user }: Props) {
                         )}
                       </View>
                       <View style={styles.wtSpacer} />
-                    </View>
+                    </Pressable>
                   ) : !showWeightEditor ? (
                     <TouchableOpacity style={styles.wtEmpty} onPress={handleAddWeight} activeOpacity={0.8}>
                       <Text style={styles.wtEmptyText}>+ Add weight</Text>
@@ -817,10 +893,9 @@ export default function TrackerScreen({ user }: Props) {
                         saving && styles.disabled,
                       ]}
                       onPress={handleSave}
-                      // At least one of the three must be logged — when editing
-                      // too, not just when creating. Clearing every field is
-                      // what "Reset day" is for.
-                      disabled={saving || nothingEntered}
+                      // Not disabled when empty: a press that did nothing taught a new
+                      // user nothing. handleSave answers it with what's missing.
+                      disabled={saving}
                       activeOpacity={0.85}
                     >
                       {saving ? (
@@ -836,9 +911,13 @@ export default function TrackerScreen({ user }: Props) {
                     </TouchableOpacity>
                   )}
                   {/* Constant-height slot so the action block stays the same height in every
-                      state (read-only / editable / editing) — prevents layout shift. Holds the
-                      Reset link when a saved entry exists; otherwise an empty spacer. */}
+                      state (read-only / editable / editing) - prevents layout shift. Holds the
+                      Reset link when a saved entry exists, the "what to do" hint on an
+                      empty day, and otherwise an empty spacer. */}
                   <View style={styles.saveHintWrap}>
+                    {!hasSavedEntry && nothingEntered && (
+                      <Text style={styles.saveHintText}>Pick Yes or No, or add a weight, to save this day</Text>
+                    )}
                     {hasSavedEntry && (
                       <Pressable
                         onPress={handleReset}
@@ -865,6 +944,7 @@ export default function TrackerScreen({ user }: Props) {
               entries={chartEntries}
               today={today}
               onJumpToDate={(d) => { navigateToDate(d); setActiveTab('entries'); }}
+              onNotice={(msg) => showToast('info', msg)}
             />
           )}
         </ScrollView>
@@ -971,7 +1051,17 @@ const styles = StyleSheet.create({
   },
   dateNavOff: { opacity: 0.35, backgroundColor: 'transparent', shadowOpacity: 0, elevation: 0 },
   dateNavText: { fontSize: 20, color: P.text, fontWeight: '400', lineHeight: 24 },
-  dateCenter: { alignItems: 'center' },
+  // flex: 1 keeps the date centred in the row whatever sits either side of it.
+  dateCenter: { flex: 1, alignItems: 'center' },
+  todayPill: {
+    position: 'absolute',
+    right: 54, // clear of the 38px › button and the row's 8px padding
+    paddingHorizontal: 9,
+    paddingVertical: 4,
+    borderRadius: 10,
+    backgroundColor: '#FFFFFF',
+  },
+  todayPillText: { fontSize: 11.5, fontWeight: '800', color: P.primary },
   dateMainRow: { flexDirection: 'row', alignItems: 'center' },
   dateMain: { fontSize: 15, fontWeight: '800', color: P.text, letterSpacing: -0.2 },
   dateCaret: { marginLeft: 5, marginTop: 2 },
@@ -1052,6 +1142,20 @@ const styles = StyleSheet.create({
   wtUnit: { fontSize: 13, color: P.textMuted, fontWeight: '700' },
   wtNotSpecified: { fontSize: 15, color: P.textMuted, fontWeight: '600' },
 
+  // Load failure
+  loadError: {
+    backgroundColor: P.surface,
+    borderRadius: 16,
+    paddingVertical: 28,
+    paddingHorizontal: 20,
+    alignItems: 'center',
+    gap: 8,
+    marginTop: 24,
+  },
+  loadErrorTitle: { fontSize: 17, fontWeight: '800', color: P.text, letterSpacing: -0.3 },
+  loadErrorBody: { fontSize: 14, color: P.textMuted, fontWeight: '600', textAlign: 'center' },
+  loadErrorBtn: { alignSelf: 'stretch', marginTop: 12 },
+
   // Action area
   actionWrap: {},
   editBtn: {
@@ -1082,8 +1186,13 @@ const styles = StyleSheet.create({
   saveBtnWaitText: { color: '#C8C0B8' },
   disabled: { opacity: 0.4 },
   saveBtnText: { color: '#fff', fontSize: 15.5, fontWeight: '700', letterSpacing: 0.1 },
-  saveHintWrap: { height: 30, alignItems: 'center', justifyContent: 'center' },
-  resetBtnText: { color: P.textMuted, fontSize: 13.5, fontWeight: '600', letterSpacing: 0.1 },
+  // Taller than the text so Reset sits well clear of Save, out of the path of
+  // a slightly-low tap on the button above.
+  saveHintWrap: { height: 44, paddingTop: 10, alignItems: 'center', justifyContent: 'center' },
+  saveHintText: { color: P.textMuted, fontSize: 12.5, fontWeight: '600' },
+  // Red and full weight: it is the screen's only destructive action, and the old
+  // muted grey read as disabled text.
+  resetBtnText: { color: '#B3261E', fontSize: 14, fontWeight: '700', letterSpacing: 0.1 },
 
   // Bottom nav (Top Accent Slide)
   bottomNav: {

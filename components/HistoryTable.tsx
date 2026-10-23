@@ -1,5 +1,6 @@
 import React from 'react';
 import { View, Text, TouchableOpacity, StyleSheet } from 'react-native';
+import { needsYear } from '../lib/dates';
 
 export interface HistoryEntry {
   date: string; // YYYY-MM-DD
@@ -22,6 +23,7 @@ function formatDateShort(dateStr: string): string {
   const [y, m, d] = dateStr.split('-').map(Number);
   return new Date(y, m - 1, d).toLocaleDateString('en-US', {
     weekday: 'short', month: 'short', day: 'numeric',
+    ...(needsYear(dateStr) && { year: 'numeric' }),
   });
 }
 
