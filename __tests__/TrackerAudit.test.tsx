@@ -1,10 +1,14 @@
 import React from 'react';
 import { Alert } from 'react-native';
-import { render, fireEvent, waitFor, screen, cleanup } from '@testing-library/react-native';
+import { render, fireEvent, waitFor, screen, cleanup, act } from '@testing-library/react-native';
 
 // Rows the mocked `select` returns, and whether that read fails.
 let mockRows: any[] = [];
 let mockLoadFails = false;
+// How the failure looks: a server error (HTTP status) or no response at all.
+let mockLoadOffline = false;
+// When set, the entries read waits on this instead of answering at once.
+let mockLoadGate: Promise<any> | null = null;
 const mockUpsert = jest.fn(async (..._args: any[]) => ({ error: null as any }));
 const mockSignOut = jest.fn();
 
@@ -17,11 +21,13 @@ jest.mock('../lib/supabase', () => {
       order: () => chain,
       upsert: (...args: any[]) => (mockUpsert as any)(...args),
       then: (res: any, rej: any) =>
-        Promise.resolve(
+        (mockLoadGate ?? Promise.resolve(
           mockLoadFails
-            ? { data: null, error: { message: 'Network request failed' } }
+            ? mockLoadOffline
+              ? { data: null, error: { message: 'TypeError: Network request failed', code: '' }, status: 0 }
+              : { data: null, error: { message: 'internal error', code: 'XX000' }, status: 500 }
             : { data: mockRows, error: null },
-        ).then(res, rej),
+        )).then(res, rej),
     };
     return chain;
   };
@@ -51,6 +57,8 @@ async function renderTracker() {
 beforeEach(() => {
   mockRows = [];
   mockLoadFails = false;
+  mockLoadOffline = false;
+  mockLoadGate = null;
   mockUpsert.mockClear();
   mockUpsert.mockImplementation(async () => ({ error: null }));
   mockSignOut.mockClear();
@@ -62,6 +70,14 @@ afterEach(() => {
 });
 
 describe('a failed load', () => {
+  it('says plainly when there is no data or Wi-Fi connection', async () => {
+    mockLoadFails = true;
+    mockLoadOffline = true;
+    await render(<TrackerScreen user={user} />);
+    expect(await screen.findByText('No internet connection')).toBeTruthy();
+    expect(screen.getByText(/not connected to mobile data or Wi-Fi/)).toBeTruthy();
+  });
+
   it('says so instead of showing an empty account', async () => {
     mockLoadFails = true;
     await render(<TrackerScreen user={user} />);
@@ -75,6 +91,25 @@ describe('a failed load', () => {
     const retry = await screen.findByText('Try again');
     mockLoadFails = false;
     fireEvent.press(retry);
+    expect(await screen.findByText('Any movement')).toBeTruthy();
+    expect(screen.queryByTestId('load-error')).toBeNull();
+  });
+});
+
+describe('a load that stalls', () => {
+  it('shows the card instead of spinning, then the entries once they arrive', async () => {
+    let release!: (v: any) => void;
+    mockLoadGate = new Promise((r) => { release = r; });
+    jest.useFakeTimers();
+    await render(<TrackerScreen user={user} />);
+
+    await act(async () => { jest.advanceTimersByTime(8000); });
+    expect(screen.getByTestId('load-error')).toBeTruthy();
+    expect(screen.getByText('No internet connection')).toBeTruthy();
+
+    // A slow network, not no network: the late answer replaces the card.
+    await act(async () => { release({ data: [], error: null }); });
+    jest.useRealTimers();
     expect(await screen.findByText('Any movement')).toBeTruthy();
     expect(screen.queryByTestId('load-error')).toBeNull();
   });

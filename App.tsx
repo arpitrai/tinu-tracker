@@ -6,6 +6,7 @@ import { SafeAreaProvider } from 'react-native-safe-area-context';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import type { Session } from '@supabase/supabase-js';
 import { supabase } from './lib/supabase';
+import { launchSession } from './lib/session';
 import PulseDrawLoader from './components/PulseDrawLoader';
 import SignInScreen from './screens/SignInScreen';
 import TrackerScreen from './screens/TrackerScreen';
@@ -44,8 +45,8 @@ function AppContent() {
       .then((v) => { if (mounted) setOnboarded(v === '1'); })
       .catch(() => { if (mounted) setOnboarded(true); }); // never block on a storage read
 
-    supabase.auth.getSession()
-      .then(({ data: { session } }) => {
+    launchSession()
+      .then((session) => {
         if (!mounted) return;
         setSession(session);
         setLoading(false);
@@ -56,8 +57,11 @@ function AppContent() {
         setLoading(false);
       });
 
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
-      if (mounted) setSession(session);
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
+      // Only an actual sign-out ends the session here. Offline, the library can
+      // report its initial session as null when it merely couldn't renew it,
+      // which would otherwise undo launchSession()'s offline fallback.
+      if (mounted && (session || event === 'SIGNED_OUT')) setSession(session);
     });
 
     return () => {

@@ -84,6 +84,8 @@ interface DayEntry {
 type Tab = 'entries' | 'trend';
 
 const NAV_ACCENT_W = 42; // width of the sliding gradient accent bar
+// How long the first load may take before the "couldn't load" card shows.
+const LOAD_WAIT_MS = 8000;
 
 // Local time, never UTC: toISOString() would roll the day over at the wrong
 // moment for any non-UTC timezone (in IST it reports yesterday until 05:30).
@@ -252,30 +254,58 @@ export default function TrackerScreen({ user }: Props) {
 
   // A failed load must never render as an empty account: that reads as lost
   // data, and the blank form would invite logging over days that do exist.
-  const [loadError, setLoadError] = useState(false);
+  // 'offline' when the request never reached the server (or timed out), which
+  // with no data or Wi-Fi is what happens; 'server' when the server answered
+  // with an error, so the connection itself is fine.
+  const [loadError, setLoadError] = useState<'offline' | 'server' | null>(null);
+
+  // Each load gets a number so a slow response from an earlier attempt (say,
+  // before Try again) can't overwrite a newer one.
+  const loadSeq = useRef(0);
 
   const loadData = useCallback(async () => {
+    const seq = ++loadSeq.current;
     setLoading(true);
-    const { data, error } = await supabase
+    let settled = false;
+
+    const settle = (data: DayEntry[] | null, failure: 'offline' | 'server' = 'server') => {
+      if (seq !== loadSeq.current) return;
+      settled = true;
+      setLoadError(data ? null : failure);
+      if (data) {
+        const map = new Map<string, DayEntry>();
+        for (const e of data) map.set(e.date, e);
+        setAllEntries(map);
+        const todayEntry = map.get(today);
+        if (todayEntry) {
+          setExercised(todayEntry.exercised ?? null);
+          setAteSweets(todayEntry.ate_sweets ?? null);
+          setWeight(todayEntry.weight != null ? String(todayEntry.weight) : '');
+        }
+      }
+      setLoading(false);
+    };
+
+    // Offline with an expired token, the request waits on a token renewal that
+    // retries for about 25 seconds. Show the "couldn't load" card well before
+    // that; if the entries do arrive later (a slow network, not no network),
+    // settle() still applies them and clears the card.
+    setTimeout(() => {
+      if (!settled && seq === loadSeq.current) {
+        setLoadError('offline');
+        setLoading(false);
+      }
+    }, LOAD_WAIT_MS);
+
+    // status 0 is supabase-js's "the request never got a response": no
+    // connection, as opposed to an HTTP error from the server.
+    const { data, error, status } = await supabase
       .from('entries')
       .select('*')
       .eq('user_id', user.id)
       .order('date', { ascending: false })
-      .then((res) => res, () => ({ data: null, error: true }));
-
-    setLoadError(!!error || !data);
-    if (!error && data) {
-      const map = new Map<string, DayEntry>();
-      for (const e of data) map.set(e.date, e);
-      setAllEntries(map);
-      const todayEntry = map.get(today);
-      if (todayEntry) {
-        setExercised(todayEntry.exercised ?? null);
-        setAteSweets(todayEntry.ate_sweets ?? null);
-        setWeight(todayEntry.weight != null ? String(todayEntry.weight) : '');
-      }
-    }
-    setLoading(false);
+      .then((res) => res, () => ({ data: null, error: true, status: 0 }));
+    settle(!error && data ? (data as DayEntry[]) : null, status === 0 ? 'offline' : 'server');
   }, [user.id, today]);
 
   useEffect(() => { loadData(); }, [loadData]);
@@ -701,9 +731,13 @@ export default function TrackerScreen({ user }: Props) {
           {loadError ? (
             // Replaces both tabs: neither an empty log nor an empty chart is true.
             <View style={styles.loadError} testID="load-error">
-              <Text style={styles.loadErrorTitle}>Couldn't load your entries</Text>
+              <Text style={styles.loadErrorTitle}>
+                {loadError === 'offline' ? 'No internet connection' : "Couldn't load your entries"}
+              </Text>
               <Text style={styles.loadErrorBody}>
-                Your data is safe. Check your connection and try again.
+                {loadError === 'offline'
+                  ? "You're not connected to mobile data or Wi-Fi. Connect and try again. Your entries are safe."
+                  : 'Something went wrong on our side. Your entries are safe. Please try again.'}
               </Text>
               <Pressable
                 style={({ pressed }) => [styles.saveBtn, styles.loadErrorBtn, pressed && styles.disabled]}
