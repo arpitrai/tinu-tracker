@@ -1,0 +1,2 @@
+# See fingerprint.config.js: release tooling, not native code.
+eas.json
