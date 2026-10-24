@@ -14,12 +14,20 @@ import {
   StatusBar,
   Alert,
   Switch,
+  AppState,
+  Linking,
 } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import DateTimePicker, { DateTimePickerEvent } from '@react-native-community/datetimepicker';
 import { supabase } from '../lib/supabase';
 import type { User } from '@supabase/supabase-js';
-import { loadReminderTimes, saveReminderTimes, syncDailyReminders } from '../lib/notifications';
+import {
+  getNotificationPermission,
+  loadReminderTimes,
+  requestNotificationPermission,
+  saveReminderTimes,
+  syncDailyReminders,
+} from '../lib/notifications';
 import Toast, { type ToastKind, type ToastState } from './Toast';
 
 interface Props {
@@ -65,7 +73,21 @@ export default function ProfileModal({ visible, onClose, user, avatarUrl, onName
     setToast({ id: toastSeq.current, kind, message });
   };
 
-  const remindersOn = times.length > 0;
+  // Whether the OS will actually let us post. Saved times alone said nothing
+  // about that: a fresh install defaults to 10pm on, so a user who refused the
+  // permission prompt was shown a reminder that could never arrive.
+  const [notifGranted, setNotifGranted] = useState(true);
+  const [canAskAgain, setCanAskAgain] = useState(true);
+  const refreshPermission = async () => {
+    const p = await getNotificationPermission();
+    setNotifGranted(p.granted);
+    setCanAskAgain(p.canAskAgain);
+    return p;
+  };
+
+  // Shown as on only when reminders can really fire. The saved times are kept
+  // either way, so allowing notifications later brings them straight back.
+  const remindersOn = notifGranted && times.length > 0;
 
   useEffect(() => {
     if (!visible) return;
@@ -73,16 +95,52 @@ export default function ProfileModal({ visible, onClose, user, avatarUrl, onName
     setError(null);
     setImgError(false);
     // Load saved reminder times (defaults to 10pm ON on a fresh install; also
-    // migrates the old single-time keys once — both handled in notifications.ts).
+    // migrates the old single-time keys once, both handled in notifications.ts).
     loadReminderTimes().then(setTimes);
+    refreshPermission();
   }, [visible, user]);
+
+  // Coming back from system Settings: pick up a permission the user just
+  // granted (or revoked) without making them reopen the screen.
+  useEffect(() => {
+    if (!visible) return;
+    const sub = AppState.addEventListener('change', (state) => {
+      if (state === 'active') refreshPermission();
+    });
+    return () => sub.remove();
+  }, [visible]);
+
+  const openSettingsPrompt = () => {
+    const msg = 'Notifications are turned off for Tinu Tracker. Allow them in Settings to get daily reminders.';
+    if (Platform.OS === 'web') { window.alert(msg); return; }
+    Alert.alert('Notifications are off', msg, [
+      { text: 'Not now', style: 'cancel' },
+      { text: 'Open Settings', onPress: () => { Linking.openSettings(); } },
+    ]);
+  };
+
+  // Turning reminders on needs permission first: ask while Android still
+  // allows a prompt, otherwise send the user to Settings. Their saved times
+  // reappear as soon as it's granted.
+  const enableNotifications = async () => {
+    const p = await refreshPermission();
+    if (p.granted) return true;
+    if (!p.canAskAgain) { openSettingsPrompt(); return false; }
+    const granted = await requestNotificationPermission();
+    await refreshPermission();
+    return granted;
+  };
 
   // Reminder edits are a draft until Save is pressed — nothing is written to
   // storage and no notification is rescheduled before then. Closing the screen
   // discards them, exactly like an edited name.
   const draftTimes = (next: string[]) => setTimes([...new Set(next)].sort());
 
-  const toggleReminders = (on: boolean) => draftTimes(on ? (times.length ? times : [DEFAULT_TIME]) : []);
+  const toggleReminders = async (on: boolean) => {
+    if (!on) { draftTimes([]); return; }
+    if (!notifGranted && !(await enableNotifications())) return;
+    draftTimes(times.length ? times : [DEFAULT_TIME]);
+  };
   const togglePreset = (t: string) =>
     draftTimes(times.includes(t) ? times.filter((x) => x !== t) : [...times, t]);
   const removeTime = (t: string) => draftTimes(times.filter((x) => x !== t));
@@ -106,18 +164,20 @@ export default function ProfileModal({ visible, onClose, user, avatarUrl, onName
       if (nameErr) throw nameErr;
       onNameSaved?.(trimmed);
 
-      const sorted = await saveReminderTimes(times);
-      setTimes(sorted);
-      const ok = await syncDailyReminders();
-      if (!ok && sorted.length > 0) {
-        // Permission was refused, so reminders can't run. Turn them back off
-        // rather than leaving the screen promising nudges that never arrive.
-        setTimes(await saveReminderTimes([]));
-        await syncDailyReminders();
-        const msg = 'Enable notifications for Tinu Tracker in your device Settings to get reminders.';
-        if (Platform.OS === 'web') window.alert(msg);
-        else Alert.alert('Notifications are off', msg);
-        return; // name saved, reminders didn't — don't claim a clean save
+      // Without permission the switch reads off and the reminder controls are
+      // hidden, so there are no reminder edits to save. Leave the stored times
+      // alone so they come back once notifications are allowed.
+      if (notifGranted) {
+        const sorted = await saveReminderTimes(times);
+        setTimes(sorted);
+        const ok = await syncDailyReminders();
+        if (!ok && sorted.length > 0) {
+          // Permission was withdrawn after the screen opened. Show the switch
+          // as off rather than promising nudges that never arrive.
+          await refreshPermission();
+          openSettingsPrompt();
+          return; // name saved, reminders didn't, so don't claim a clean save
+        }
       }
 
       // Deliberately stays open: closing the screen on save gave no confirmation
@@ -126,8 +186,11 @@ export default function ProfileModal({ visible, onClose, user, avatarUrl, onName
       showToast('success', 'Changes saved');
     } catch (e: any) {
       setError(e.message ?? 'Something went wrong');
+    } finally {
+      // In finally, not after the try: the permission-refused path returns
+      // early, and skipping this left the Save button spinning forever.
+      setSaving(false);
     }
-    setSaving(false);
   };
 
   const handleDeleteAccount = async () => {
@@ -217,6 +280,7 @@ export default function ProfileModal({ visible, onClose, user, avatarUrl, onName
               <View style={styles.cardTop}>
                 <Text style={styles.cardTitle}>Daily reminder</Text>
                 <Switch
+                  testID="reminder-switch"
                   value={remindersOn}
                   onValueChange={toggleReminders}
                   trackColor={{ true: M3.primary, false: M3.outlineVariant }}
@@ -262,7 +326,13 @@ export default function ProfileModal({ visible, onClose, user, avatarUrl, onName
                   <Text style={styles.remindHint}>You'll get a nudge to log your day at each time.</Text>
                 </>
               ) : (
-                <Text style={styles.remindHint}>Get a daily nudge to log your day.</Text>
+                <Text style={styles.remindHint}>
+                  {notifGranted
+                    ? 'Get a daily nudge to log your day.'
+                    : canAskAgain
+                      ? 'Notifications are off for Tinu Tracker. Turn this on to allow them.'
+                      : 'Notifications are off for Tinu Tracker. Turn this on to open Settings.'}
+                </Text>
               )}
             </View>
 

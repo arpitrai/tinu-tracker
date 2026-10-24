@@ -1,4 +1,5 @@
 import React from 'react';
+import { Alert } from 'react-native';
 import { render, fireEvent, waitFor, screen, cleanup, act } from '@testing-library/react-native';
 
 const mockUpdateUser = jest.fn(async () => ({ error: null as any }));
@@ -12,7 +13,12 @@ jest.mock('../lib/supabase', () => ({
 
 const mockSync = jest.fn(async () => true);
 const mockSaveTimes = jest.fn(async (t: string[]) => [...t].sort());
+// What the OS reports; tests flip these to simulate a refused or blocked prompt.
+let mockPermission = { granted: true, canAskAgain: true };
+const mockRequest = jest.fn(async () => false);
 jest.mock('../lib/notifications', () => ({
+  getNotificationPermission: jest.fn(async () => mockPermission),
+  requestNotificationPermission: (...a: any[]) => (mockRequest as any)(...a),
   loadReminderTimes: jest.fn(async () => ['22:00']),
   saveReminderTimes: (...a: any[]) => (mockSaveTimes as any)(...a),
   syncDailyReminders: (...a: any[]) => (mockSync as any)(...a),
@@ -44,6 +50,9 @@ beforeEach(() => {
   mockSync.mockImplementation(async () => true);
   mockSaveTimes.mockClear();
   mockSaveTimes.mockImplementation(async (t: string[]) => [...t].sort());
+  mockPermission = { granted: true, canAskAgain: true };
+  mockRequest.mockClear();
+  mockRequest.mockImplementation(async () => false);
 });
 
 // Must be awaited: cleanup is async here, and an un-awaited one leaves the
@@ -53,6 +62,51 @@ afterEach(async () => {
   await cleanup();
   // Flush anything the unmounted tree left in flight before the next render.
   await act(async () => {});
+});
+
+describe('reminders without notification permission', () => {
+  it('shows reminders as off instead of promising a 10pm nudge', async () => {
+    mockPermission = { granted: false, canAskAgain: false };
+    await renderProfile();
+    expect(await screen.findByText(/Notifications are off for Tinu Tracker/)).toBeTruthy();
+    expect(screen.getByTestId('reminder-switch').props.value).toBe(false);
+    expect(screen.queryByText('10:00 PM')).toBeNull();
+  });
+
+  it('keeps the saved times when the name is saved', async () => {
+    mockPermission = { granted: false, canAskAgain: false };
+    await renderProfile();
+    await screen.findByText(/Notifications are off/);
+    fireEvent.press(screen.getByText('Save changes'));
+    await waitFor(() => expect(mockUpdateUser).toHaveBeenCalled());
+    expect(mockSaveTimes).not.toHaveBeenCalled();
+  });
+
+  it('offers Settings when the switch is turned on and the prompt is blocked', async () => {
+    mockPermission = { granted: false, canAskAgain: false };
+    const alert = jest.spyOn(Alert, 'alert').mockImplementation(() => {});
+    await renderProfile();
+    await screen.findByText(/Turn this on to open Settings/);
+    await act(async () => { fireEvent(screen.getByTestId('reminder-switch'), 'valueChange', true); });
+    expect(alert).toHaveBeenCalledTimes(1);
+    const buttons = alert.mock.calls[0][2] as any[];
+    expect(buttons.map((b) => b.text)).toContain('Open Settings');
+    expect(mockRequest).not.toHaveBeenCalled();
+    alert.mockRestore();
+  });
+
+  it('asks for permission, then brings the saved times back', async () => {
+    mockPermission = { granted: false, canAskAgain: true };
+    mockRequest.mockImplementation(async () => {
+      mockPermission = { granted: true, canAskAgain: true };
+      return true;
+    });
+    await renderProfile();
+    await screen.findByText(/Turn this on to allow them/);
+    await act(async () => { fireEvent(screen.getByTestId('reminder-switch'), 'valueChange', true); });
+    expect(mockRequest).toHaveBeenCalledTimes(1);
+    expect(await screen.findByText('10:00 PM')).toBeTruthy();
+  });
 });
 
 describe('saving on the profile screen', () => {
@@ -99,6 +153,9 @@ describe('saving on the profile screen', () => {
 
     await waitFor(() => expect(mockSync).toHaveBeenCalled());
     expect(screen.queryByTestId('toast-message')).toBeNull();
+    // The spinner must end: this path returns early, and it once left the
+    // button spinning forever.
+    expect(await screen.findByText('Save changes')).toBeTruthy();
   });
 
   // Runs last on purpose. Under this renderer, a test that presses a chip and

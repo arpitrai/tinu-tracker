@@ -69,6 +69,16 @@ async function ensureAndroidChannel() {
   });
 }
 
+// Read the permission without prompting. `canAskAgain` is false once the user
+// has blocked notifications for good, after which only system Settings can turn
+// them back on. Web keeps its old behaviour (no gating) since it has no
+// equivalent per-app setting here.
+export async function getNotificationPermission(): Promise<{ granted: boolean; canAskAgain: boolean }> {
+  if (Platform.OS === 'web') return { granted: true, canAskAgain: true };
+  const { status, canAskAgain } = await Notifications.getPermissionsAsync();
+  return { granted: status === 'granted', canAskAgain };
+}
+
 // Ask for permission if not already decided. Returns true if we may post.
 export async function requestNotificationPermission(): Promise<boolean> {
   await ensureAndroidChannel();
