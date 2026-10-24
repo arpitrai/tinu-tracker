@@ -49,9 +49,13 @@ npx jest --ci --silent >/dev/null 2>&1 || fail "Tests failed. Run 'npm test' to 
 step "Typechecking"
 npx tsc --noEmit >/dev/null || fail "Typecheck failed. Run 'npx tsc --noEmit' to see why."
 
+# Computed the way EAS computes it for builds and updates: with the production
+# environment's variables loaded. `expo-updates runtimeversion:resolve` skips
+# those and can report a different runtime than the build actually has.
 local_runtime() {
-  npx expo-updates runtimeversion:resolve --platform "$1" 2>/dev/null \
-    | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>console.log(JSON.parse(s).runtimeVersion))'
+  eas fingerprint:generate --platform "$1" --environment production --json --non-interactive 2>/dev/null \
+    | sed -n '/^{/,$p' \
+    | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>console.log(JSON.parse(s).hash))'
 }
 
 latest_build() { # prints "<runtime> <commit> <build number>" for the newest finished production build
