@@ -19,6 +19,7 @@ npm test                          # Run all Jest tests
 npm run test:watch                # Watch mode
 npx jest __tests__/TriToggle      # Run a single test file (path substring match)
 npx jest -t "deselects"           # Run tests matching a name pattern
+npx tsc --noEmit                  # Typecheck (CI runs this after the tests)
 ```
 
 Builds are distributed via EAS (`eas.json`); the `preview` profile outputs an installable Android APK.
@@ -54,6 +55,8 @@ Jest with the `jest-expo` preset. Tests live in `__tests__/`. Two patterns in us
 
 1. **Pure-logic tests** — testable helpers are exported from component files specifically for this (e.g. `parseWeight` from `TrendsChart.tsx`), or duplicated as a local function in the test (`weightInput.test.ts`). When adding logic worth testing, export it.
 2. **Component tests** — `@testing-library/react-native`, asserting on `testID`s (e.g. `toggle-yes`).
+
+`jest.setup.js` clears any real timer a test file leaves running before Jest tears the file down. A leaked Toast dismiss timer used to fire into the next file and fail an unrelated test at random on CI.
 
 Native chart libs are stubbed in `__mocks__/` (`victory-native`, `@shopify/react-native-skia`, `react-native-reanimated`) and mapped in `jest.config.js`. If you add a dependency that pulls in native modules, it likely needs an entry in `transformIgnorePatterns` and/or a mock.
 

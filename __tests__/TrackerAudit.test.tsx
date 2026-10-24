@@ -5,7 +5,7 @@ import { render, fireEvent, waitFor, screen, cleanup } from '@testing-library/re
 // Rows the mocked `select` returns, and whether that read fails.
 let mockRows: any[] = [];
 let mockLoadFails = false;
-const mockUpsert = jest.fn(async () => ({ error: null as any }));
+const mockUpsert = jest.fn(async (..._args: any[]) => ({ error: null as any }));
 const mockSignOut = jest.fn();
 
 jest.mock('../lib/supabase', () => {

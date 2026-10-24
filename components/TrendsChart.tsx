@@ -292,7 +292,7 @@ function WeightChart({ points, svgW }: { points: Point[]; svgW: number }) {
               tickCount: 5,
               lineColor: C.axisLine,
               labelColor: C.axis,
-              formatYLabel: (v: number) => (v % 1 === 0 ? v.toFixed(0) : v.toFixed(1)),
+              formatYLabel: (v: number | null) => (v == null ? '' : v % 1 === 0 ? v.toFixed(0) : v.toFixed(1)),
             },
           ]}
         >

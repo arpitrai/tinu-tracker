@@ -5,12 +5,12 @@ interface Props {
   value: boolean | null;
   onChange: (v: boolean | null) => void;
   yesColor: string;
-  noColor: string;
+  noColor: string | null; // null: the No option takes no colour when selected
   disabled?: boolean;
 }
 
 export default function TriToggle({ value, onChange, yesColor, noColor, disabled }: Props) {
-  const segs: { label: string; val: boolean; color: string }[] = [
+  const segs: { label: string; val: boolean; color: string | null }[] = [
     { label: 'Yes', val: true,  color: yesColor },
     { label: 'No',  val: false, color: noColor  },
   ];
@@ -23,7 +23,7 @@ export default function TriToggle({ value, onChange, yesColor, noColor, disabled
           <TouchableOpacity
             key={String(seg.val)}
             testID={`toggle-${seg.label.toLowerCase()}`}
-            style={[styles.seg, active && { backgroundColor: seg.color }]}
+            style={[styles.seg, active && seg.color != null && { backgroundColor: seg.color }]}
             onPress={() => !disabled && onChange(active ? null : seg.val)}
             activeOpacity={disabled ? 1 : 0.75}
             disabled={disabled}

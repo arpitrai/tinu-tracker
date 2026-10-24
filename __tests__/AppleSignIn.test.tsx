@@ -10,8 +10,8 @@ jest.mock('expo-web-browser', () => ({
   openAuthSessionAsync: jest.fn(async () => ({ type: 'cancel' })),
 }));
 
-const mockSignInWithIdToken = jest.fn(async () => ({ error: null as any }));
-const mockUpdateUser = jest.fn(async () => ({ error: null as any }));
+const mockSignInWithIdToken = jest.fn(async (..._args: any[]) => ({ error: null as any }));
+const mockUpdateUser = jest.fn(async (..._args: any[]) => ({ error: null as any }));
 
 jest.mock('../lib/supabase', () => ({
   supabase: {

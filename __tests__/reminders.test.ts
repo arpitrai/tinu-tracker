@@ -19,7 +19,7 @@ jest.mock('expo-constants', () => ({ default: { expoConfig: {} } }));
 
 let mockScheduled: { identifier: string; trigger: any }[] = [];
 let mockPermission = 'granted';
-const mockCancel = jest.fn(async () => {});
+const mockCancel = jest.fn(async (_id: string) => {});
 
 jest.mock('expo-notifications', () => ({
   AndroidImportance: { DEFAULT: 3 },

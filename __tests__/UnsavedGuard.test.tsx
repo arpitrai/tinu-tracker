@@ -3,7 +3,7 @@ import { render, fireEvent, waitFor, screen, cleanup } from '@testing-library/re
 
 // Rows the mocked `select` returns; individual tests reseed this.
 let mockRows: any[] = [];
-const mockUpsert = jest.fn(async () => ({ error: null as any }));
+const mockUpsert = jest.fn(async (..._args: any[]) => ({ error: null as any }));
 
 jest.mock('../lib/supabase', () => {
   const makeChain = () => {
