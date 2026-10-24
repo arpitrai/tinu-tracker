@@ -24,6 +24,8 @@ npx tsc --noEmit                  # Typecheck (CI runs this after the tests)
 
 Builds are distributed via EAS (`eas.json`); the `preview` profile outputs an installable Android APK.
 
+JS-only changes ship over the air with `scripts/release-ota.sh "message"` (add `--dry-run` to check without publishing). Don't run `eas update` directly: the script refuses to publish unless the tree is clean and pushed, tests and typecheck pass, and the update's runtime matches an installed store build. `eas.json` and `package.json` scripts both feed the update fingerprint, so editing either can silently strand updates; the script compensates for `eas.json` and skips any platform that needs a new store build.
+
 App icons in `assets/` are generated from the `PulseRiseIcon` brand mark (defined in `SignInScreen.tsx`) — the amber→rose gradient pulse glyph. After regenerating the PNGs, run `expo prebuild -p android` and rebuild; native launcher icons are baked at build time and do **not** update via Fast Refresh.
 
 ## Architecture
